@@ -1,0 +1,42 @@
+FROM node:18-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY package.json .
+COPY tsconfig.json .
+
+# Copy workspace package files
+COPY ../../package.json ./
+COPY ../../yarn.lock ./
+COPY ../../packages/shared/package.json ./packages/shared/
+COPY ../../packages/database/package.json ./packages/database/
+
+# Install dependencies
+RUN yarn install --frozen-lockfile
+
+# Copy source code
+COPY . .
+COPY ../../packages/shared ./packages/shared
+COPY ../../packages/database ./packages/database
+
+# Build the app
+RUN yarn build
+
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy package files and build output
+COPY --from=builder /app/package.json .
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+
+# Set environment variables
+ENV NODE_ENV=production
+
+# Expose port
+EXPOSE 3000
+
+# Start the app
+CMD ["node", "dist/index.js"]

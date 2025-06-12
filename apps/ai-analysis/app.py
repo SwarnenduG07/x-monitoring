@@ -75,6 +75,7 @@ class AnalysisRequest(BaseModel):
     authorDisplayName: Optional[str] = None
     postUrl: str
     timestamp: str
+    tokenSymbols: Optional[List[str]] = None
 
 class AnalysisResponse(BaseModel):
     analysisId: int
@@ -88,38 +89,52 @@ class AnalysisResponse(BaseModel):
 # Gemini prompt for analysis
 ANALYSIS_PROMPT_TEMPLATE = """
 You are an AI trading advisor specialized in analyzing social media posts from crypto influencers.
-Your task is to analyze the following post from X (formerly Twitter) and determine if it signals a good buying opportunity.
+Your task is to analyze the following post from X (formerly Twitter) and determine if it signals a good buying opportunity for specific tokens.
 
 Post from {author_name} (@{author_username}):
 "{post_text}"
 Posted at: {timestamp}
 URL: {post_url}
 
-Provide your analysis in JSON format with the following structure:
-{
+TOKENS OF INTEREST: {token_symbols}
+
+Please analyze this post with a focus on the TOKENS OF INTEREST listed above. Your analysis should determine:
+1. Whether the post contains direct or indirect mentions of these tokens
+2. If the sentiment towards these tokens is positive, negative, or neutral
+3. Whether the post suggests a trading action (buy, sell, or hold)
+4. How confident you are in your assessment
+
+Provide your analysis in the following JSON format:
+{{
   "sentimentScore": [number between -1 and 1, where 1 is very positive],
   "confidence": [number between 0 and 1, representing your confidence in this analysis],
   "decision": ["buy", "sell", or "hold"],
-  "reasons": {
+  "reasons": {{
     "positiveSignals": [array of strings explaining positive signals in the post],
     "negativeSignals": [array of strings explaining negative signals or concerns],
     "neutralSignals": [array of strings explaining neutral or ambiguous signals]
-  },
-  "marketConditions": {
+  }},
+  "marketConditions": {{
     "overallMarketSentiment": [string describing current market sentiment if mentioned],
     "relatedTokens": [
-      {
-        "symbol": [token symbol mentioned],
-        "sentiment": [number between -1 and 1]
-      }
+      {{
+        "symbol": [token symbol from TOKENS OF INTEREST],
+        "sentiment": [number between -1 and 1],
+        "mentioned": [boolean indicating if token was explicitly mentioned],
+        "impliedSentiment": [string explanation of why this sentiment was assigned]
+      }}
     ]
-  }
-}
+  }}
+}}
+
+IMPORTANT GUIDELINES:
+- Focus ONLY on the specific TOKENS OF INTEREST provided
+- If a token is not mentioned explicitly but could be affected by the content, indicate this in your analysis
+- Assign higher confidence scores only when the post has clear signals about the tokens
+- Default to "hold" with low confidence when there's insufficient information
+- If the post mentions other tokens not in the TOKENS OF INTEREST list, only include them if they directly relate to our tokens of interest
 
 Use JSON mode to structure your response and provide a comprehensive analysis based solely on the content of the post.
-Focus on clear buy/sell signals, token mentions, price predictions, and project evaluations.
-Only include "marketConditions" if relevant information is present in the post.
-Ensure your confidence score accurately reflects the strength of the signal.
 """
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
@@ -127,12 +142,15 @@ async def analyze_with_gemini(post_data: AnalysisRequest) -> Dict[str, Any]:
     """
     Analyze the post with Gemini API, with retry logic
     """
+    token_symbols = ", ".join(post_data.tokenSymbols) if post_data.tokenSymbols else "Any cryptocurrency tokens"
+    
     prompt = ANALYSIS_PROMPT_TEMPLATE.format(
         author_name=post_data.authorDisplayName or post_data.authorUsername,
         author_username=post_data.authorUsername,
         post_text=post_data.postText,
         timestamp=post_data.timestamp,
-        post_url=post_data.postUrl
+        post_url=post_data.postUrl,
+        token_symbols=token_symbols
     )
     
     response = await gemini_model.generate_content_async(prompt)
@@ -162,6 +180,30 @@ async def analyze_with_gemini(post_data: AnalysisRequest) -> Dict[str, Any]:
         for signal_type in ["positiveSignals", "negativeSignals", "neutralSignals"]:
             if signal_type not in result["reasons"]:
                 result["reasons"][signal_type] = []
+        
+        # If tokens of interest were provided, ensure they're in the marketConditions.relatedTokens
+        if post_data.tokenSymbols and "marketConditions" in result and "relatedTokens" in result["marketConditions"]:
+            existing_tokens = {token["symbol"] for token in result["marketConditions"]["relatedTokens"]}
+            
+            # Add any missing tokens of interest with neutral sentiment
+            for token in post_data.tokenSymbols:
+                if token not in existing_tokens:
+                    if not result["marketConditions"]["relatedTokens"]:
+                        result["marketConditions"]["relatedTokens"] = []
+                    
+                    result["marketConditions"]["relatedTokens"].append({
+                        "symbol": token,
+                        "sentiment": 0  # Neutral sentiment
+                    })
+        
+        # If no marketConditions were provided but we have tokens of interest, create it
+        elif post_data.tokenSymbols and ("marketConditions" not in result or "relatedTokens" not in result["marketConditions"]):
+            if "marketConditions" not in result:
+                result["marketConditions"] = {}
+            
+            result["marketConditions"]["relatedTokens"] = [
+                {"symbol": token, "sentiment": 0} for token in post_data.tokenSymbols
+            ]
                 
         return result
     except Exception as e:

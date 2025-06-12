@@ -3,13 +3,13 @@ import express from 'express';
 import { TwitterApi } from 'twitter-api-v2';
 import { createRedisService, createLogger, XPost, RedisTopic } from '@believe-x/shared';
 import { prisma } from '@believe-x/database';
+import axios from 'axios';
 
 
 dotenv.config();
 
 const PORT = process.env.PORT || 3000;
 const MONITORING_INTERVAL = parseInt(process.env.MONITORING_INTERVAL || '5000', 10);
-const X_ACCOUNTS_TO_MONITOR = (process.env.X_ACCOUNTS_TO_MONITOR || '').split(',').filter(Boolean);
 
 
 const app = express();
@@ -53,7 +53,19 @@ app.post('/api/accounts', async (req, res) => {
   }
   
   try {
-    const userResult = await readOnlyClient.v2.userByUsername(username);
+    const cleanUsername = username.startsWith('@') ? username.substring(1) : username;
+    
+    const existingAccount = await prisma.monitoredAccount.findFirst({
+      where: {
+        xUsername: cleanUsername
+      }
+    });
+    
+    if (existingAccount) {
+      return res.status(200).json(existingAccount);
+    }
+    
+    const userResult = await readOnlyClient.v2.userByUsername(cleanUsername);
     const user = userResult.data;
 
     const account = await prisma.monitoredAccount.create({
@@ -71,12 +83,71 @@ app.post('/api/accounts', async (req, res) => {
   }
 });
 
+app.get('/api/active-accounts', async (req, res) => {
+  try {
+    const accountsWithSubscriptions = await prisma.monitoredAccount.findMany({
+      where: {
+        userSubscriptions: {
+          some: {
+            active: true
+          }
+        }
+      }
+    });
+    
+    res.json(accountsWithSubscriptions);
+  } catch (error) {
+    logger.error('Error fetching active accounts:', error);
+    res.status(500).json({ error: 'Failed to fetch active accounts' });
+  }
+});
+
+app.get('/api/subscriptions', async (req, res) => {
+  try {
+    const { tokenSymbol, accountId } = req.query;
+    
+    const whereClause: any = {
+      active: true
+    };
+    
+    if (tokenSymbol) {
+      whereClause.tokenSymbol = tokenSymbol as string;
+    }
+    
+    if (accountId) {
+      whereClause.accountId = parseInt(accountId as string);
+    }
+    
+    const subscriptions = await prisma.userSubscription.findMany({
+      where: whereClause,
+      include: {
+        user: true,
+        account: true
+      }
+    });
+    
+    res.json(subscriptions);
+  } catch (error) {
+    logger.error('Error fetching subscriptions:', error);
+    res.status(500).json({ error: 'Failed to fetch subscriptions' });
+  }
+});
 
 async function monitorAccounts() {
   try {
     logger.info('Starting monitoring cycle');
     
-    const accounts = await prisma.monitoredAccount.findMany();
+    const accounts = await prisma.monitoredAccount.findMany({
+      where: {
+        userSubscriptions: {
+          some: {
+            active: true
+          }
+        }
+      }
+    });
+    
+    logger.info(`Monitoring ${accounts.length} accounts with active subscriptions`);
     
     for (const account of accounts) {
       const timer = logger.startTimer(`fetch_tweets_${account.xUsername}`);
@@ -122,14 +193,20 @@ async function monitorAccounts() {
               }
             });
             
-            await redisService.publish(RedisTopic.NEW_POST, {
-              postId: savedPost.id,
-              postText: post.text,
-              authorUsername: post.authorUsername,
-              authorDisplayName: post.authorDisplayName,
-              postUrl: post.url,
-              timestamp: post.createdAt
-            });
+            try {
+              await axios.post('http://trade-bot:3002/webhook/new-post', {
+                postId: savedPost.id,
+                postText: post.text,
+                authorUsername: post.authorUsername,
+                authorDisplayName: post.authorDisplayName,
+                postUrl: post.url,
+                timestamp: post.createdAt
+              });
+              
+              logger.info(`New post notification sent to trade-bot for @${post.authorUsername}`);
+            } catch (error) {
+              logger.error(`Error sending post to trade-bot:`, error);
+            }
             
             logger.info(`New post detected from ${post.authorUsername}: ${post.text.substring(0, 50)}...`);
           }
@@ -149,9 +226,6 @@ async function monitorAccounts() {
 
 app.listen(PORT, () => {
   logger.info(`X Monitoring Service running on port ${PORT}`);
-  logger.info(`Monitoring interval: ${MONITORING_INTERVAL}ms`);
-  logger.info(`Accounts to monitor: ${X_ACCOUNTS_TO_MONITOR.join(', ') || 'None (will load from database)'}`);
-  
-
+  logger.info(`Monitoring interval: ${MONITORING_INTERVAL}ms`);  
   monitorAccounts();
 }); 

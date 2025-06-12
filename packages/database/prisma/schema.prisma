@@ -20,6 +20,7 @@ model MonitoredAccount {
   posts        Post[]
 
   @@map("monitored_accounts")
+  userSubscriptions UserSubscription[]
 }
 
 model Post {
@@ -93,4 +94,36 @@ model Notification {
   @@index([type])
   @@index([createdAt])
   @@map("notifications")
+}
+
+model TelegramUser {
+  id            Int               @id @default(autoincrement())
+  telegramId    String            @unique @map("telegram_id")
+  username      String?
+  firstName     String            @map("first_name")
+  lastName      String?           @map("last_name")
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @default(now()) @updatedAt @map("updated_at")
+  
+  subscriptions UserSubscription[]
+
+  @@map("telegram_users")
+}
+
+model UserSubscription {
+  id            Int            @id @default(autoincrement())
+  userId        Int            @map("user_id")
+  accountId     Int            @map("account_id")
+  tokenSymbol   String         @map("token_symbol") @db.VarChar(10)
+  active        Boolean        @default(true)
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @default(now()) @updatedAt @map("updated_at")
+
+  user          TelegramUser   @relation(fields: [userId], references: [id])
+  account       MonitoredAccount @relation(fields: [accountId], references: [id])
+
+  @@unique([userId, accountId, tokenSymbol])
+  @@index([userId])
+  @@index([accountId])
+  @@map("user_subscriptions")
 } 
