@@ -1,0 +1,96 @@
+        
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model MonitoredAccount {
+  id           Int      @id @default(autoincrement())
+  xAccountId   String   @unique @map("x_account_id")
+  xUsername    String   @map("x_username")
+  displayName  String?  @map("display_name")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
+  
+
+  posts        Post[]
+
+  @@map("monitored_accounts")
+}
+
+model Post {
+  id           Int      @id @default(autoincrement())
+  postId       String   @unique @map("post_id")
+  accountId    Int      @map("account_id")
+  content      String
+  postUrl      String   @map("post_url")
+  postedAt     DateTime @map("posted_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+
+  account      MonitoredAccount @relation(fields: [accountId], references: [id])
+  analyses     AnalysisResult[]
+
+  @@index([accountId])
+  @@index([postedAt])
+  @@map("posts")
+}
+
+model AnalysisResult {
+  id               Int      @id @default(autoincrement())
+  postId           Int      @map("post_id")
+  sentimentScore   Float    @map("sentiment_score")
+  confidence       Float
+  decision         String   @db.VarChar(10)
+  reasons          Json
+  marketConditions Json?    @map("market_conditions")
+  processedAt      DateTime @default(now()) @map("processed_at")
+
+
+  post             Post     @relation(fields: [postId], references: [id])
+  trades           Trade[]
+
+  @@index([postId])
+  @@index([decision])
+  @@map("analysis_results")
+}
+
+model Trade {
+  id             Int      @id @default(autoincrement())
+  uuid           String   @unique
+  analysisId     Int      @map("analysis_id")
+  tokenSymbol    String   @map("token_symbol") @db.VarChar(10)
+  tokenAmount    Float    @map("token_amount")
+  priceUsd       Float    @map("price_usd")
+  transactionHash String?  @map("transaction_hash")
+  isPaperTrade   Boolean  @default(true) @map("is_paper_trade")
+  status         String   @db.VarChar(10)
+  executedAt     DateTime @default(now()) @map("executed_at")
+  errorMessage   String?  @map("error_message")
+
+
+  analysis       AnalysisResult @relation(fields: [analysisId], references: [id])
+
+  @@index([analysisId])
+  @@index([status])
+  @@index([executedAt])
+  @@map("trades")
+}
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  type      String   @db.VarChar(20)
+  title     String
+  message   String
+  data      Json?
+  isRead    Boolean  @default(false) @map("is_read")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([type])
+  @@index([createdAt])
+  @@map("notifications")
+} 

@@ -1,0 +1,26 @@
+{
+  "name": "@believe-x/database",
+  "version": "1.0.0",
+  "description": "Database layer with Prisma for Believe X AI Trading Bot",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio",
+    "db:migrate": "prisma migrate dev",
+    "db:reset": "prisma migrate reset",
+    "clean": "rm -rf dist",
+    "init": "node scripts/init.js",
+    "postinstall": "prisma generate"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.8.0"
+  },
+  "devDependencies": {
+    "prisma": "^5.8.0",
+    "typescript": "^5.3.3"
+  }
+} 

@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Believe X AI Trading Bot</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+  <style>
+    body {
+      padding-top: 2rem;
+      background-color: #f8f9fa;
+    }
+    .navbar-brand {
+      font-weight: bold;
+    }
+    .card {
+      margin-bottom: 1.5rem;
+      border-radius: 0.5rem;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    .card-header {
+      font-weight: bold;
+      background-color: #f1f5f9;
+    }
+    .status-indicator {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-right: 0.5rem;
+    }
+    .status-healthy {
+      background-color: #10b981;
+    }
+    .status-unhealthy {
+      background-color: #ef4444;
+    }
+    .status-unknown {
+      background-color: #f59e0b;
+    }
+    .monitoring-list {
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .refresh-btn {
+      cursor: pointer;
+    }
+    .header-icon {
+      margin-right: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top">
+    <div class="container">
+      <a class="navbar-brand" href="#">
+        <span class="text-primary">Believe</span> X AI Trading Bot
+      </a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbarNav">
+        <ul class="navbar-nav ms-auto">
+          <li class="nav-item">
+            <a class="nav-link" href="#dashboard">Dashboard</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="#monitoring">Monitoring</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="#trades">Trades</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="#portfolio">Portfolio</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="#settings">Settings</a>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container mt-5" id="dashboard">
+    <h1 class="mb-4">Dashboard</h1>
+    
+    <div class="row">
+      <div class="col-md-6">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>
+              <i class="bi bi-gear-fill header-icon"></i>
+              System Status
+            </span>
+            <span class="refresh-btn" onclick="loadSystemStatus()">
+              <i class="bi bi-arrow-clockwise"></i>
+            </span>
+          </div>
+          <div class="card-body" id="system-status">
+            <div class="d-flex justify-content-center">
+              <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-md-6">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>
+              <i class="bi bi-graph-up header-icon"></i>
+              Trading Summary
+            </span>
+            <span class="refresh-btn" onclick="loadTradingSummary()">
+              <i class="bi bi-arrow-clockwise"></i>
+            </span>
+          </div>
+          <div class="card-body" id="trading-summary">
+            <div class="d-flex justify-content-center">
+              <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row mt-4" id="monitoring">
+      <div class="col-md-6">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>
+              <i class="bi bi-twitter header-icon"></i>
+              Monitored Accounts
+            </span>
+            <span class="refresh-btn" onclick="loadMonitoredAccounts()">
+              <i class="bi bi-arrow-clockwise"></i>
+            </span>
+          </div>
+          <div class="card-body" id="monitored-accounts">
+            <div class="d-flex justify-content-center">
+              <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-md-6">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>
+              <i class="bi bi-clipboard-data header-icon"></i>
+              Recent Posts
+            </span>
+            <span class="refresh-btn" onclick="loadRecentPosts()">
+              <i class="bi bi-arrow-clockwise"></i>
+            </span>
+          </div>
+          <div class="card-body" id="recent-posts">
+            <div class="d-flex justify-content-center">
+              <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row mt-4" id="trades">
+      <div class="col-md-12">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>
+              <i class="bi bi-currency-exchange header-icon"></i>
+              Recent Trades
+            </span>
+            <span class="refresh-btn" onclick="loadRecentTrades()">
+              <i class="bi bi-arrow-clockwise"></i>
+            </span>
+          </div>
+          <div class="card-body" id="recent-trades">
+            <div class="d-flex justify-content-center">
+              <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row mt-4" id="portfolio">
+      <div class="col-md-12">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>
+              <i class="bi bi-wallet-fill header-icon"></i>
+              Portfolio
+            </span>
+            <span class="refresh-btn" onclick="loadPortfolio()">
+              <i class="bi bi-arrow-clockwise"></i>
+            </span>
+          </div>
+          <div class="card-body" id="portfolio-data">
+            <div class="d-flex justify-content-center">
+              <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css"></script>
+  <script>
+    // Helper function to handle fetch errors
+    async function fetchWithErrorHandling(url) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`HTTP error ${response.status}`);
+        }
+        return await response.json();
+      } catch (error) {
+        console.error(`Error fetching from ${url}:`, error);
+        return { error: error.message };
+      }
+    }
+
+    // Load system status
+    async function loadSystemStatus() {
+      const statusElement = document.getElementById('system-status');
+      statusElement.innerHTML = `
+        <div class="d-flex justify-content-center">
+          <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+        </div>
+      `;
+
+      const data = await fetchWithErrorHandling('/api/status');
+      
+      if (data.error) {
+        statusElement.innerHTML = `<div class="alert alert-danger">Error loading system status: ${data.error}</div>`;
+        return;
+      }
+
+      let html = `
+        <table class="table table-striped">
+          <thead>
+            <tr>
+              <th>Service</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>API Gateway</td>
+              <td>
+                <span class="status-indicator status-healthy"></span>
+                Healthy
+              </td>
+            </tr>
+      `;
+
+      data.services.forEach(service => {
+        const statusClass = service.status === 'healthy' ? 'status-healthy' : 
+                           service.status === 'unhealthy' ? 'status-unhealthy' : 'status-unknown';
+        
+        html += `
+          <tr>
+            <td>${service.service}</td>
+            <td>
+              <span class="status-indicator ${statusClass}"></span>
+              ${service.status.charAt(0).toUpperCase() + service.status.slice(1)}
+            </td>
+          </tr>
+        `;
+      });
+
+      html += `
+          </tbody>
+        </table>
+        <div class="text-muted small">Last updated: ${new Date(data.timestamp).toLocaleString()}</div>
+      `;
+
+      statusElement.innerHTML = html;
+    }
+
+    // Load trading summary
+    async function loadTradingSummary() {
+      const summaryElement = document.getElementById('trading-summary');
+      
+      // Placeholder data for demo
+      summaryElement.innerHTML = `
+        <div class="row">
+          <div class="col-6 text-center border-end">
+            <h3 class="text-primary">12</h3>
+            <p class="text-muted">Trades Today</p>
+          </div>
+          <div class="col-6 text-center">
+            <h3 class="text-success">+5.3%</h3>
+            <p class="text-muted">Daily Return</p>
+          </div>
+        </div>
+        <hr>
+        <div class="row">
+          <div class="col-6 text-center border-end">
+            <h4>Paper Mode</h4>
+            <div class="form-check form-switch d-flex justify-content-center">
+              <input class="form-check-input" type="checkbox" role="switch" id="paperModeSwitch" checked disabled>
+            </div>
+          </div>
+          <div class="col-6 text-center">
+            <h4>Threshold</h4>
+            <p>0.80</p>
+          </div>
+        </div>
+      `;
+    }
+
+    // Load monitored accounts
+    async function loadMonitoredAccounts() {
+      const accountsElement = document.getElementById('monitored-accounts');
+      accountsElement.innerHTML = `
+        <div class="d-flex justify-content-center">
+          <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+        </div>
+      `;
+
+      const data = await fetchWithErrorHandling('/api/x-monitoring/accounts');
+      
+      if (data.error) {
+        accountsElement.innerHTML = `<div class="alert alert-danger">Error loading accounts: ${data.error}</div>`;
+        return;
+      }
+
+      if (data.length === 0) {
+        accountsElement.innerHTML = `
+          <div class="alert alert-info">No accounts being monitored yet.</div>
+          <div class="input-group">
+            <input type="text" class="form-control" placeholder="X username" id="newAccountInput">
+            <button class="btn btn-primary" type="button" onclick="addAccount()">Add</button>
+          </div>
+        `;
+        return;
+      }
+
+      let html = `
+        <div class="list-group monitoring-list">
+      `;
+
+      data.forEach(account => {
+        html += `
+          <div class="list-group-item d-flex justify-content-between align-items-center">
+            <div>
+              <strong>@${account.x_username}</strong>
+              ${account.display_name ? `<br><small>${account.display_name}</small>` : ''}
+            </div>
+            <span class="badge bg-primary rounded-pill">Active</span>
+          </div>
+        `;
+      });
+
+      html += `
+        </div>
+        <div class="mt-3">
+          <div class="input-group">
+            <input type="text" class="form-control" placeholder="X username" id="newAccountInput">
+            <button class="btn btn-primary" type="button" onclick="addAccount()">Add</button>
+          </div>
+        </div>
+      `;
+
+      accountsElement.innerHTML = html;
+    }
+
+    // Load recent posts
+    async function loadRecentPosts() {
+      const postsElement = document.getElementById('recent-posts');
+      
+      // Placeholder data for demo
+      postsElement.innerHTML = `
+        <div class="list-group monitoring-list">
+          <div class="list-group-item">
+            <div class="d-flex w-100 justify-content-between">
+              <h6 class="mb-1">@crypto_trader</h6>
+              <small class="text-muted">3 minutes ago</small>
+            </div>
+            <p class="mb-1">Bullish on $SOL! The ecosystem is growing rapidly with new DeFi projects.</p>
+            <small><a href="#" class="text-decoration-none">View on X</a></small>
+          </div>
+          <div class="list-group-item">
+            <div class="d-flex w-100 justify-content-between">
+              <h6 class="mb-1">@blockchain_guru</h6>
+              <small class="text-muted">15 minutes ago</small>
+            </div>
+            <p class="mb-1">Just discovered a promising new token launching next week. Could be huge!</p>
+            <small><a href="#" class="text-decoration-none">View on X</a></small>
+          </div>
+          <div class="list-group-item">
+            <div class="d-flex w-100 justify-content-between">
+              <h6 class="mb-1">@defi_expert</h6>
+              <small class="text-muted">42 minutes ago</small>
+            </div>
+            <p class="mb-1">Market showing strong resistance at current levels. Expecting a breakout soon.</p>
+            <small><a href="#" class="text-decoration-none">View on X</a></small>
+          </div>
+        </div>
+      `;
+    }
+
+    // Load recent trades
+    async function loadRecentTrades() {
+      const tradesElement = document.getElementById('recent-trades');
+      tradesElement.innerHTML = `
+        <div class="d-flex justify-content-center">
+          <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+        </div>
+      `;
+
+      const data = await fetchWithErrorHandling('/api/trading/trades');
+      
+      if (data.error) {
+        tradesElement.innerHTML = `<div class="alert alert-danger">Error loading trades: ${data.error}</div>`;
+        return;
+      }
+
+      if (data.length === 0) {
+        tradesElement.innerHTML = `<div class="alert alert-info">No trades executed yet.</div>`;
+        return;
+      }
+
+      let html = `
+        <div class="table-responsive">
+          <table class="table table-striped">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Token</th>
+                <th>Amount</th>
+                <th>Price</th>
+                <th>Total</th>
+                <th>Type</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+      `;
+
+      data.forEach(trade => {
+        const date = new Date(trade.executed_at).toLocaleString();
+        const total = (parseFloat(trade.token_amount) * parseFloat(trade.price_usd)).toFixed(2);
+        
+        html += `
+          <tr>
+            <td>${date}</td>
+            <td>${trade.token_symbol}</td>
+            <td>${parseFloat(trade.token_amount).toFixed(6)}</td>
+            <td>$${parseFloat(trade.price_usd).toFixed(6)}</td>
+            <td>$${total}</td>
+            <td>${trade.is_paper_trade ? '<span class="badge bg-secondary">Paper</span>' : '<span class="badge bg-primary">Live</span>'}</td>
+            <td>
+              ${trade.status === 'completed' 
+                ? '<span class="badge bg-success">Completed</span>' 
+                : trade.status === 'pending' 
+                  ? '<span class="badge bg-warning text-dark">Pending</span>' 
+                  : '<span class="badge bg-danger">Failed</span>'}
+            </td>
+          </tr>
+        `;
+      });
+
+      html += `
+            </tbody>
+          </table>
+        </div>
+      `;
+
+      tradesElement.innerHTML = html;
+    }
+
+    // Load portfolio
+    async function loadPortfolio() {
+      const portfolioElement = document.getElementById('portfolio-data');
+      portfolioElement.innerHTML = `
+        <div class="d-flex justify-content-center">
+          <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+        </div>
+      `;
+
+      const data = await fetchWithErrorHandling('/api/trading/portfolio');
+      
+      if (data.error) {
+        portfolioElement.innerHTML = `<div class="alert alert-danger">Error loading portfolio: ${data.error}</div>`;
+        return;
+      }
+
+      if (data.length === 0) {
+        portfolioElement.innerHTML = `<div class="alert alert-info">Your portfolio is empty.</div>`;
+        return;
+      }
+
+      let html = `
+        <div class="table-responsive">
+          <table class="table table-striped">
+            <thead>
+              <tr>
+                <th>Token</th>
+                <th>Amount</th>
+                <th>Current Price</th>
+                <th>Value</th>
+                <th>Cost Basis</th>
+                <th>Profit/Loss</th>
+              </tr>
+            </thead>
+            <tbody>
+      `;
+
+      let totalValue = 0;
+      let totalCost = 0;
+
+      data.forEach(token => {
+        const value = parseFloat(token.token_amount) * parseFloat(token.current_price_usd);
+        const profit = value - parseFloat(token.cost_basis_usd);
+        const profitPercent = (profit / parseFloat(token.cost_basis_usd) * 100).toFixed(2);
+        
+        totalValue += value;
+        totalCost += parseFloat(token.cost_basis_usd);
+        
+        html += `
+          <tr>
+            <td>${token.token_symbol}</td>
+            <td>${parseFloat(token.token_amount).toFixed(6)}</td>
+            <td>$${parseFloat(token.current_price_usd).toFixed(6)}</td>
+            <td>$${value.toFixed(2)}</td>
+            <td>$${parseFloat(token.cost_basis_usd).toFixed(2)}</td>
+            <td class="${profit >= 0 ? 'text-success' : 'text-danger'}">
+              ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)} (${profit >= 0 ? '+' : ''}${profitPercent}%)
+            </td>
+          </tr>
+        `;
+      });
+
+      const totalProfit = totalValue - totalCost;
+      const totalProfitPercent = (totalProfit / totalCost * 100).toFixed(2);
+
+      html += `
+            </tbody>
+            <tfoot class="table-dark">
+              <tr>
+                <td colspan="3"><strong>Total</strong></td>
+                <td><strong>$${totalValue.toFixed(2)}</strong></td>
+                <td><strong>$${totalCost.toFixed(2)}</strong></td>
+                <td class="${totalProfit >= 0 ? 'text-success' : 'text-danger'}">
+                  <strong>${totalProfit >= 0 ? '+' : ''}$${totalProfit.toFixed(2)} (${totalProfit >= 0 ? '+' : ''}${totalProfitPercent}%)</strong>
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      `;
+
+      portfolioElement.innerHTML = html;
+    }
+
+    // Add new account function
+    async function addAccount() {
+      const usernameInput = document.getElementById('newAccountInput');
+      const username = usernameInput.value.trim();
+      
+      if (!username) {
+        alert('Please enter a valid X username');
+        return;
+      }
+      
+      try {
+        const response = await fetch('/api/x-monitoring/accounts', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ username }),
+        });
+        
+        if (!response.ok) {
+          throw new Error('Failed to add account');
+        }
+        
+        // Reload the accounts list
+        loadMonitoredAccounts();
+      } catch (error) {
+        alert(`Error adding account: ${error.message}`);
+      }
+    }
+
+    // Initial data loading
+    document.addEventListener('DOMContentLoaded', function() {
+      loadSystemStatus();
+      loadTradingSummary();
+      loadMonitoredAccounts();
+      loadRecentPosts();
+      loadRecentTrades();
+      loadPortfolio();
+    });
+  </script>
+</body>
+</html> 
