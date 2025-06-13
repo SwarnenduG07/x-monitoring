@@ -2,6 +2,8 @@ import { Telegraf, Context } from 'telegraf';
 import { createLogger, Logger } from '@believe-x/shared';
 import { prisma } from '@believe-x/database';
 import axios from 'axios';
+import { verifyTokenAddress, getTokenBySymbol } from './service/tken-service';
+import { verifySolanaToken } from './service/solana-token-verification';
 
 const API_GATEWAY_URL = process.env.API_GATEWAY_URL || 'http://localhost:3001';
 
@@ -30,8 +32,8 @@ export function setupBotCommands(bot: Telegraf, logger: Logger) {
       await ctx.reply(
         `Welcome to Believe X Trading Bot! 🚀\n\n` +
         `I can help you monitor X (Twitter) accounts and execute trades based on their tweets.\n\n` +
-        `Use /register TOKEN @handle to start monitoring an account.\n` +
-        `Example: /register DOGE @elonmusk\n\n` +
+        `Use /register <token_address> @handle to start monitoring an account.\n` +
+        `Example: /register 0x1234...abcd @elonmusk\n\n` +
         `Use /help to see all available commands.`
       );
       
@@ -46,25 +48,25 @@ export function setupBotCommands(bot: Telegraf, logger: Logger) {
   bot.help(async (ctx) => {
     await ctx.reply(
       `Available commands:\n\n` +
-      `/register TOKEN @handle - Start monitoring an account for a specific token\n` +
-      `/unregister TOKEN @handle - Stop monitoring an account for a specific token\n` +
+      `/register <token_address> @handle - Start monitoring an account for a specific token\n` +
+      `/unregister <token_address> @handle - Stop monitoring an account for a specific token\n` +
       `/list - List all your active subscriptions\n` +
+      `/lookup <symbol> - Look up a token by symbol\n` +
+      `/verify <token_address> - Verify a token address\n` +
       `/status - Check the bot status\n` +
       `/help - Show this help message`
     );
   });
-  
-  // Register command
   bot.command('register', async (ctx) => {
     try {
       const args = ctx.message.text.split(' ').slice(1);
       
       if (args.length < 2) {
-        await ctx.reply('Usage: /register TOKEN @handle\nExample: /register DOGE @elonmusk');
+        await ctx.reply('Usage: /register <token_address> @handle\nExample: /register Es9vMFrzaCERCLwKzHnh6mFYHTxgdRJrQbz6bG3y5QNo @elonmusk');
         return;
       }
       
-      const tokenSymbol = args[0].toUpperCase();
+      const tokenAddress = args[0].trim();
       let xHandle = args[1];
       
       // Remove @ if present
@@ -82,27 +84,63 @@ export function setupBotCommands(bot: Telegraf, logger: Logger) {
         return;
       }
       
-      await ctx.reply(`Processing your request to monitor @${xHandle} for ${tokenSymbol}...`);
+      await ctx.reply(`Verifying Solana token address ${tokenAddress}...`);
+      
+      // Use our improved token verification
+      const tokenInfo = await verifySolanaToken(tokenAddress);
+      
+      if (!tokenInfo) {
+        await ctx.reply('❌ Invalid or unknown Solana token address. Please check the address and try again.');
+        return;
+      }
+      
+      if (!tokenInfo.market) {
+        await ctx.reply(`⚠️ Warning: Token ${tokenInfo.symbol} doesn't appear to be actively traded on major DEXes. Continuing anyway...`);
+      }
+      
+      await ctx.reply(`✅ Token verified: ${tokenInfo.symbol} (${tokenInfo.name || tokenInfo.symbol})\nProcessing your request to monitor @${xHandle}...`);
       
       try {
-        // Use the API gateway to create the subscription
-        const response = await axios.post(`${API_GATEWAY_URL}/api/user-subscriptions`, {
-          telegramId: user.telegramId,
-          xUsername: xHandle,
-          tokenSymbol
+        // Find or create the X account
+        let account = await prisma.monitoredAccount.findFirst({
+          where: { xUsername: xHandle }
         });
         
-        if (response.status === 201) {
-          // New subscription created
-          await ctx.reply(`✅ Successfully registered to monitor @${xHandle} for ${tokenSymbol} tokens!`);
-        } else {
-          // Subscription already existed
-          await ctx.reply(`✅ You are now monitoring @${xHandle} for ${tokenSymbol} tokens!`);
+        if (!account) {
+          // Create the account
+          account = await prisma.monitoredAccount.create({
+            data: {
+              xAccountId: `placeholder_${xHandle}`, // We'll update this later when we actually fetch from X API
+              xUsername: xHandle,
+              displayName: xHandle
+            }
+          });
         }
         
-        logger.info(`User ${user.id} registered to monitor @${xHandle} for ${tokenSymbol}`);
+        // Create token first
+        const token = await prisma.token.create({
+          data: {
+            address: tokenAddress,
+            symbol: tokenInfo.symbol,
+            name: tokenInfo.name,
+            chainId: 1
+          }
+        });
+        
+        // Then create subscription with the token ID
+        await prisma.userSubscription.create({
+          data: {
+            userId: user.id,
+            accountId: account.id,
+            tokenId: token.id,
+            active: true
+          }
+        });
+        
+        await ctx.reply(`✅ Successfully registered to monitor @${xHandle} for ${tokenInfo.symbol} tokens!`);
+        logger.info(`User ${user.id} registered to monitor @${xHandle} for ${tokenInfo.symbol} (${tokenInfo.address})`);
       } catch (error) {
-        logger.error('Error registering subscription via API:', error);
+        logger.error('Error registering subscription:', error);
         await ctx.reply('Sorry, I could not register your subscription. Please try again later.');
       }
     } catch (error) {
@@ -111,17 +149,17 @@ export function setupBotCommands(bot: Telegraf, logger: Logger) {
     }
   });
   
-  // Unregister command
+  // Unregister command with token address
   bot.command('unregister', async (ctx) => {
     try {
       const args = ctx.message.text.split(' ').slice(1);
       
       if (args.length < 2) {
-        await ctx.reply('Usage: /unregister TOKEN @handle\nExample: /unregister DOGE @elonmusk');
+        await ctx.reply('Usage: /unregister <token_address> @handle\nExample: /unregister 0x1234...abcd @elonmusk');
         return;
       }
       
-      const tokenSymbol = args[0].toUpperCase();
+      const tokenAddress = args[0].trim();
       let xHandle = args[1];
       
       // Remove @ if present
@@ -136,6 +174,16 @@ export function setupBotCommands(bot: Telegraf, logger: Logger) {
       
       if (!user) {
         await ctx.reply('Please start the bot with /start first.');
+        return;
+      }
+      
+      // Find the token
+      const token = await prisma.token.findFirst({
+        where: { address: tokenAddress }
+      });
+      
+      if (!token) {
+        await ctx.reply(`❌ Token not found with address: ${tokenAddress}`);
         return;
       }
       
@@ -154,28 +202,24 @@ export function setupBotCommands(bot: Telegraf, logger: Logger) {
         where: {
           userId: user.id,
           accountId: account.id,
-          tokenSymbol,
+          tokenId: token.id,
           active: true
         }
       });
       
       if (!subscription) {
-        await ctx.reply(`You are not monitoring @${xHandle} for ${tokenSymbol} tokens.`);
+        await ctx.reply(`You are not monitoring @${xHandle} for ${token.symbol} tokens.`);
         return;
       }
       
-      try {
-        // Use the API gateway to update the subscription
-        await axios.put(`${API_GATEWAY_URL}/api/user-subscriptions/${subscription.id}`, {
-          active: false
-        });
-        
-        await ctx.reply(`✅ Successfully unregistered from monitoring @${xHandle} for ${tokenSymbol} tokens.`);
-        logger.info(`User ${user.id} unregistered from monitoring @${xHandle} for ${tokenSymbol}`);
-      } catch (error) {
-        logger.error('Error updating subscription via API:', error);
-        await ctx.reply('Sorry, I could not update your subscription. Please try again later.');
-      }
+      // Deactivate the subscription
+      await prisma.userSubscription.update({
+        where: { id: subscription.id },
+        data: { active: false }
+      });
+      
+      await ctx.reply(`✅ Successfully unregistered from monitoring @${xHandle} for ${token.symbol} tokens.`);
+      logger.info(`User ${user.id} unregistered from monitoring @${xHandle} for ${token.symbol}`);
     } catch (error) {
       logger.error('Error in unregister command:', error);
       await ctx.reply('Sorry, something went wrong. Please try again later.');
@@ -185,7 +229,6 @@ export function setupBotCommands(bot: Telegraf, logger: Logger) {
   // List command
   bot.command('list', async (ctx) => {
     try {
-      // Find the user
       const user = await prisma.telegramUser.findUnique({
         where: { telegramId: ctx.from.id.toString() }
       });
@@ -195,35 +238,97 @@ export function setupBotCommands(bot: Telegraf, logger: Logger) {
         return;
       }
       
-      try {
-        // Use the API gateway to get the user's subscriptions
-        const response = await axios.get(`${API_GATEWAY_URL}/api/user-subscriptions`, {
-          params: {
-            userId: user.id,
-            active: true
-          }
-        });
-        
-        const subscriptions = response.data;
-        
-        if (subscriptions.length === 0) {
-          await ctx.reply('You have no active subscriptions.');
-          return;
+      // Get user's subscriptions
+      const subscriptions = await prisma.userSubscription.findMany({
+        where: {
+          userId: user.id,
+          active: true
+        },
+        include: {
+          account: true,
+          token: true
         }
-        
-        let message = 'Your active subscriptions:\n\n';
-        
-        for (const sub of subscriptions) {
-          message += `- ${sub.tokenSymbol} | @${sub.account.xUsername}\n`;
-        }
-        
-        await ctx.reply(message);
-      } catch (error) {
-        logger.error('Error fetching subscriptions via API:', error);
-        await ctx.reply('Sorry, I could not fetch your subscriptions. Please try again later.');
+      });
+      
+      if (subscriptions.length === 0) {
+        await ctx.reply('You have no active subscriptions.');
+        return;
       }
+      
+      let message = 'Your active subscriptions:\n\n';
+      
+      for (const sub of subscriptions) {
+        message += `- ${sub.token.symbol} | @${sub.account.xUsername}\n`;
+        message += `  Token: ${sub.token.address.substring(0, 8)}...${sub.token.address.substring(sub.token.address.length - 6)}\n\n`;
+      }
+      
+      await ctx.reply(message);
     } catch (error) {
       logger.error('Error in list command:', error);
+      await ctx.reply('Sorry, something went wrong. Please try again later.');
+    }
+  });
+  
+  // Token lookup command
+  bot.command('token', async (ctx) => {
+    try {
+      const symbol = ctx.message.text.split(' ')[1];
+      
+      if (!symbol) {
+        await ctx.reply('Usage: /token <symbol>\nExample: /token DOGE');
+        return;
+      }
+      
+      const token = await getTokenBySymbol(symbol.toUpperCase());
+      
+      if (!token) {
+        await ctx.reply(`No token found with symbol: ${symbol.toUpperCase()}`);
+        return;
+      }
+      
+      await ctx.reply(
+        `Token Information:\n\n` +
+        `Symbol: ${token.symbol}\n` +
+        `Name: ${token.name || token.symbol}\n` +
+        `Address: ${token.address}\n` +
+        `Chain ID: ${token.chainId}\n` +
+        `Decimals: ${token.decimals}`
+      );
+    } catch (error) {
+      logger.error('Error in token command:', error);
+      await ctx.reply('Sorry, something went wrong. Please try again later.');
+    }
+  });
+  
+  // Verify token command
+  bot.command('verify', async (ctx) => {
+    try {
+      const address = ctx.message.text.split(' ')[1];
+      
+      if (!address) {
+        await ctx.reply('Usage: /verify <token_address>\nExample: /verify 0x1234...abcd');
+        return;
+      }
+      
+      await ctx.reply(`Verifying token address ${address}...`);
+      
+      const token = await verifyTokenAddress(address);
+      
+      if (!token) {
+        await ctx.reply(`❌ Invalid token address: ${address}`);
+        return;
+      }
+      
+      await ctx.reply(
+        `✅ Token verified successfully!\n\n` +
+        `Symbol: ${token.symbol}\n` +
+        `Name: ${token.name || token.symbol}\n` +
+        `Address: ${token.address}\n` +
+        `Chain ID: ${token.chainId}\n` +
+        `Decimals: ${token.decimals}`
+      );
+    } catch (error) {
+      logger.error('Error in verify command:', error);
       await ctx.reply('Sorry, something went wrong. Please try again later.');
     }
   });
@@ -231,17 +336,6 @@ export function setupBotCommands(bot: Telegraf, logger: Logger) {
   // Status command
   bot.command('status', async (ctx) => {
     try {
-      // Check API gateway health
-      let apiGatewayStatus = '❌';
-      try {
-        const apiResponse = await axios.get(`${API_GATEWAY_URL}/health`);
-        if (apiResponse.data.status === 'ok') {
-          apiGatewayStatus = '✅';
-        }
-      } catch (error) {
-        logger.error('API Gateway health check failed:', error);
-      }
-      
       // Check database health
       let dbStatus = '❌';
       try {
@@ -254,9 +348,8 @@ export function setupBotCommands(bot: Telegraf, logger: Logger) {
       await ctx.reply(
         `System Status:\n\n` +
         `Telegram Bot: ✅\n` +
-        `API Gateway: ${apiGatewayStatus}\n` +
         `Database: ${dbStatus}\n\n` +
-        `Bot is ${apiGatewayStatus === '✅' && dbStatus === '✅' ? 'fully operational' : 'experiencing issues'}.`
+        `Bot is ${dbStatus === '✅' ? 'fully operational' : 'experiencing issues'}.`
       );
     } catch (error) {
       logger.error('Error in status command:', error);
@@ -268,6 +361,57 @@ export function setupBotCommands(bot: Telegraf, logger: Logger) {
   bot.on('text', async (ctx) => {
     if (ctx.message.text.startsWith('/')) {
       await ctx.reply('Unknown command. Use /help to see available commands.');
+    }
+  });
+
+  bot.command('lookup', async (ctx) => {
+    try {
+      const symbol = ctx.message.text.split(' ')[1];
+      
+      if (!symbol) {
+        await ctx.reply('Usage: /lookup <symbol>\nExample: /lookup USDC');
+        return;
+      }
+      
+      await ctx.reply(`Looking up token with symbol ${symbol.toUpperCase()}...`);
+      
+      try {
+        // Try Jupiter API to find token by symbol
+        const jupiterResponse = await axios.get('https://token.jup.ag/all');
+        
+        if (jupiterResponse.data && Array.isArray(jupiterResponse.data)) {
+          const tokens = jupiterResponse.data.filter((t: any) => 
+            t.symbol.toUpperCase() === symbol.toUpperCase());
+          
+          if (tokens.length > 0) {
+            let message = `Found ${tokens.length} token(s) with symbol ${symbol.toUpperCase()}:\n\n`;
+            
+            for (let i = 0; i < Math.min(tokens.length, 5); i++) {
+              const token = tokens[i];
+              message += `${i+1}. ${token.symbol} (${token.name || 'Unknown'})\n`;
+              message += `   Address: ${token.address}\n`;
+              message += `   Decimals: ${token.decimals}\n\n`;
+            }
+            
+            if (tokens.length > 5) {
+              message += `...and ${tokens.length - 5} more\n\n`;
+            }
+            
+            message += `To register, use:\n/register <token_address> @handle`;
+            
+            await ctx.reply(message);
+            return;
+          }
+        }
+        
+        await ctx.reply(`No tokens found with symbol ${symbol.toUpperCase()}`);
+      } catch (error) {
+        logger.error('Error looking up token:', error);
+        await ctx.reply('Sorry, I could not look up the token. Please try again later.');
+      }
+    } catch (error) {
+      logger.error('Error in lookup command:', error);
+      await ctx.reply('Sorry, something went wrong. Please try again later.');
     }
   });
 }

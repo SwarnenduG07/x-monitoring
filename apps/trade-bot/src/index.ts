@@ -23,17 +23,14 @@ const app = express();
 const logger = createLogger('trade-bot');
 const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
 
-// Setup bot commands
 setupBotCommands(bot, logger);
 
-// Endpoint to receive post notifications directly from x-monitoring
 app.post('/webhook/new-post', async (req, res) => {
   try {
     const { postId, postText, authorUsername, authorDisplayName, postUrl, timestamp } = req.body;
     
     logger.info(`Received new post from @${authorUsername}: ${postText.substring(0, 50)}...`);
     
-    // Get the post to find the account
     const post = await prisma.post.findUnique({
       where: { id: postId },
       include: { account: true }
@@ -50,7 +47,10 @@ app.post('/webhook/new-post', async (req, res) => {
         accountId: post.accountId,
         active: true
       },
-      include: { user: true }
+      include: {
+        user: true,
+        token: true
+      }
     });
     
     if (subscriptions.length === 0) {
@@ -59,30 +59,35 @@ app.post('/webhook/new-post', async (req, res) => {
     }
     
     // Group subscriptions by token
-    const tokenSubscriptions = new Map<string, typeof subscriptions>();
+    const tokenSubscriptions = new Map<number, { token: any, subscriptions: typeof subscriptions }>();
     
     for (const subscription of subscriptions) {
-      if (!tokenSubscriptions.has(subscription.tokenSymbol)) {
-        tokenSubscriptions.set(subscription.tokenSymbol, []);
+      if (!tokenSubscriptions.has(subscription.tokenId)) {
+        tokenSubscriptions.set(subscription.tokenId, {
+          token: subscription.token,
+          subscriptions: []
+        });
       }
-      tokenSubscriptions.get(subscription.tokenSymbol)!.push(subscription);
+      tokenSubscriptions.get(subscription.tokenId)!.subscriptions.push(subscription);
     }
     
     // For each token, analyze the post
-    for (const [tokenSymbol, subs] of tokenSubscriptions.entries()) {
+    for (const [tokenId, data] of tokenSubscriptions.entries()) {
+      const { token, subscriptions: subs } = data;
+      
       try {
         // Call AI analysis service directly
-        const analysisResponse = await axios.post(`${AI_ANALYSIS_URL}/api/analyze`, {
+        const response = await axios.post(`${API_GATEWAY_URL}/api/analyze`, {
           postId,
           postText,
           authorUsername,
           authorDisplayName,
           postUrl,
           timestamp,
-          tokenSymbols: [tokenSymbol]
+          tokenSymbols: [token.symbol]
         });
         
-        const analysis = analysisResponse.data;
+        const analysis = response.data;
         
         // Format the analysis message
         const decisionEmoji = analysis.decision === 'buy' ? '🟢 BUY' : 
@@ -94,7 +99,7 @@ app.post('/webhook/new-post', async (req, res) => {
         // Get token-specific sentiment
         if (analysis.marketConditions?.relatedTokens) {
           const tokenData = analysis.marketConditions.relatedTokens.find(
-            (t: any) => t.symbol === tokenSymbol
+            (t: any) => t.symbol === token.symbol
           );
           
           if (tokenData) {
@@ -114,7 +119,7 @@ app.post('/webhook/new-post', async (req, res) => {
           .join('\n');
         
         const message = `
-<b>${tokenSymbol} Alert!</b>
+<b>${token.symbol} Alert!</b>
 
 @${authorUsername} tweeted:
 "${postText.substring(0, 100)}${postText.length > 100 ? '...' : ''}"
@@ -124,6 +129,8 @@ app.post('/webhook/new-post', async (req, res) => {
 
 ${positiveSignals ? `<b>Positive Signals:</b>\n${positiveSignals}\n\n` : ''}
 ${negativeSignals ? `<b>Concerns:</b>\n${negativeSignals}\n\n` : ''}
+
+<b>Token:</b> ${token.address.substring(0, 8)}...${token.address.substring(token.address.length - 6)}
 
 <a href="${postUrl}">View on X</a>
 `;
@@ -137,7 +144,7 @@ ${negativeSignals ? `<b>Concerns:</b>\n${negativeSignals}\n\n` : ''}
               { parse_mode: 'HTML' }
             );
             
-            logger.info(`Analysis sent to user ${subscription.user.telegramId} for ${tokenSymbol}`);
+            logger.info(`Analysis sent to user ${subscription.user.telegramId} for ${token.symbol}`);
           } catch (error) {
             logger.error(`Failed to send message to user ${subscription.user.telegramId}:`, error);
           }
@@ -145,14 +152,14 @@ ${negativeSignals ? `<b>Concerns:</b>\n${negativeSignals}\n\n` : ''}
         
         // If decision is buy with high confidence, initiate trade
         if (analysis.decision === 'buy' && analysis.confidence >= 0.8) {
-          logger.info(`High confidence buy signal for ${tokenSymbol}, initiating trade`);
+          logger.info(`High confidence buy signal for ${token.symbol}, initiating trade`);
           
           // Call trading orchestrator directly (in a real system)
           // For now, just log that we would initiate a trade
-          logger.info(`Would initiate trade for ${tokenSymbol} based on analysis`);
+          logger.info(`Would initiate trade for ${token.symbol} based on analysis`);
         }
       } catch (error) {
-        logger.error(`Error analyzing post for ${tokenSymbol}:`, error);
+        logger.error(`Error analyzing post for ${token.symbol}:`, error);
       }
     }
     
