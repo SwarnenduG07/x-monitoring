@@ -7,14 +7,15 @@ import { createLogger } from '@believe-x/shared';
 import { prisma } from '@believe-x/database';
 import axios from 'axios';
 
-// Load environment variables
+
 dotenv.config();
 
-// Constants
 const PORT = process.env.PORT || 3001;
 const X_MONITORING_URL = process.env.X_MONITORING_URL || 'http://localhost:3000';
+const AI_ANALYSIS_URL = process.env.AI_ANALYSIS_URL || 'http://localhost:8000';
+const TRADE_BOT_URL = process.env.TRADE_BOT_URL || 'http://localhost:3002';
+const TRADING_ORCHESTRATOR_URL = process.env.TRADING_ORCHESTRATOR_URL || 'http://localhost:3003';
 
-// Initialize services
 const app = express();
 const logger = createLogger('api-gateway');
 
@@ -29,6 +30,7 @@ const limiter = rateLimit({
   legacyHeaders: false,
   message: 'Too many requests from this IP, please try again after 15 minutes'
 });
+
 app.use(limiter);
 
 app.get('/health', async (req, res) => {
@@ -112,7 +114,6 @@ app.post('/api/accounts', async (req, res) => {
       return res.status(400).json({ error: 'Username is required' });
     }
     
-    // Forward the request to the X monitoring service
     try {
       const response = await axios.post(`${X_MONITORING_URL}/api/accounts`, { username });
       res.status(response.status).json(response.data);
@@ -126,7 +127,6 @@ app.post('/api/accounts', async (req, res) => {
   }
 });
 
-// New endpoint to get telegram users
 app.get('/api/telegram-users', async (req, res) => {
   try {
     const users = await prisma.telegramUser.findMany({
@@ -142,7 +142,6 @@ app.get('/api/telegram-users', async (req, res) => {
   }
 });
 
-// New endpoint to get user subscriptions
 app.get('/api/user-subscriptions', async (req, res) => {
   try {
     const { userId, tokenSymbol, accountId, active } = req.query;
@@ -183,13 +182,12 @@ app.get('/api/user-subscriptions', async (req, res) => {
   }
 });
 
-// New endpoint to create a user subscription
 app.post('/api/user-subscriptions', async (req, res) => {
   try {
-    const { telegramId, xUsername, tokenSymbol } = req.body;
+    const { telegramId, xUsername, tokenId } = req.body;
     
-    if (!telegramId || !xUsername || !tokenSymbol) {
-      return res.status(400).json({ error: 'Telegram ID, X username, and token symbol are required' });
+    if (!telegramId || !xUsername || !tokenId) {
+      return res.status(400).json({ error: 'Telegram ID, X username, and token ID are required' });
     }
     
     // Find or create telegram user
@@ -220,7 +218,7 @@ app.post('/api/user-subscriptions', async (req, res) => {
         where: {
           userId: user.id,
           accountId: account!.id,
-          tokenSymbol
+          tokenId: tokenId
         }
       });
       
@@ -243,7 +241,7 @@ app.post('/api/user-subscriptions', async (req, res) => {
         data: {
           userId: user.id,
           accountId: account!.id,
-          tokenSymbol
+          tokenId: tokenId
         }
       });
       
@@ -258,7 +256,6 @@ app.post('/api/user-subscriptions', async (req, res) => {
   }
 });
 
-// New endpoint to update a user subscription
 app.put('/api/user-subscriptions/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
@@ -284,7 +281,6 @@ app.put('/api/user-subscriptions/:id', async (req, res) => {
   }
 });
 
-// New endpoint to delete a user subscription
 app.delete('/api/user-subscriptions/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
@@ -293,7 +289,6 @@ app.delete('/api/user-subscriptions/:id', async (req, res) => {
       return res.status(400).json({ error: 'Invalid subscription ID' });
     }
     
-    // Instead of deleting, mark as inactive
     const subscription = await prisma.userSubscription.update({
       where: { id },
       data: { active: false }
@@ -345,6 +340,131 @@ app.get('/api/trades', async (req, res) => {
   } catch (error) {
     logger.error('Error fetching trades:', error);
     res.status(500).json({ error: 'Failed to fetch trades' });
+  }
+});
+
+// Forward AI analysis requests
+app.post('/api/analyze', async (req, res) => {
+  try {
+    const response = await axios.post(`${AI_ANALYSIS_URL}/api/analyze`, req.body);
+    res.status(response.status).json(response.data);
+  } catch (error) {
+    logger.error('Error forwarding request to AI analysis service:', error);
+    res.status(500).json({ error: 'Failed to analyze post' });
+  }
+});
+
+// Forward trading requests
+app.post('/api/trade', async (req, res) => {
+  try {
+    const response = await axios.post(`${TRADING_ORCHESTRATOR_URL}/api/trade`, req.body);
+    res.status(response.status).json(response.data);
+  } catch (error) {
+    logger.error('Error forwarding request to trading orchestrator:', error);
+    res.status(500).json({ error: 'Failed to execute trade' });
+  }
+});
+
+// Register a new subscription via API
+app.post('/api/register-subscription', async (req, res) => {
+  try {
+    const { telegramId, tokenAddress, xHandle } = req.body;
+    
+    if (!telegramId || !tokenAddress || !xHandle) {
+      return res.status(400).json({ 
+        error: 'Missing required fields', 
+        required: ['telegramId', 'tokenAddress', 'xHandle'] 
+      });
+    }
+    
+    // Verify the token first
+    try {
+      const tokenResponse = await axios.post(`${TRADE_BOT_URL}/api/verify-token`, { 
+        tokenAddress 
+      });
+      
+      if (!tokenResponse.data || !tokenResponse.data.valid) {
+        return res.status(400).json({ error: 'Invalid token address' });
+      }
+      
+      const tokenInfo = tokenResponse.data.tokenInfo;
+      
+      // Register the X account
+      const accountResponse = await axios.post(`${X_MONITORING_URL}/api/accounts`, {
+        username: xHandle.startsWith('@') ? xHandle.substring(1) : xHandle
+      });
+      
+      if (!accountResponse.data || !accountResponse.data.id) {
+        return res.status(500).json({ error: 'Failed to register X account' });
+      }
+      
+      // Create the subscription
+      const subscriptionResponse = await axios.post(`${TRADE_BOT_URL}/api/subscription`, {
+        telegramId,
+        tokenAddress,
+        tokenInfo,
+        accountId: accountResponse.data.id
+      });
+      
+      res.status(201).json(subscriptionResponse.data);
+    } catch (error) {
+      logger.error('Error registering subscription:', error);
+      res.status(500).json({ error: 'Failed to register subscription' });
+    }
+  } catch (error) {
+    logger.error('Error processing registration:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get system status
+app.get('/api/system-status', async (req, res) => {
+  try {
+    const services = [
+      { name: 'api-gateway', url: '/health' },
+      { name: 'x-monitoring', url: `${X_MONITORING_URL}/health` },
+      { name: 'ai-analysis', url: `${AI_ANALYSIS_URL}/health` },
+      { name: 'trade-bot', url: `${TRADE_BOT_URL}/health` },
+      { name: 'trading-orchestrator', url: `${TRADING_ORCHESTRATOR_URL}/health` }
+    ];
+    
+    const status = {};
+    
+    for (const service of services) {
+      try {
+        const serviceUrl = service.name === 'api-gateway' ? 
+          `http://localhost:${PORT}${service.url}` : service.url;
+        const response = await axios.get(serviceUrl, { timeout: 5000 });
+        (status as Record<string, any>)[service.name] = {
+          status: response.status === 200 ? 'ok' : 'error',
+          details: response.data
+        };
+      } catch (error: any) {
+        (status as Record<string, any>)[service.name] = {
+          status: 'error',
+          details: { error: error.message }
+        };
+      }
+    }
+    
+    // Check database
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      (status as Record<string, any>)['database'] = { status: 'ok' };
+    } catch (dbError: any) {
+      (status as Record<string, any>)['database'] = { 
+        status: 'error',
+        details: { error: dbError.message }
+      };
+    }
+    
+    res.json({
+      timestamp: new Date().toISOString(),
+      services: status
+    });
+  } catch (error) {
+    logger.error('Error checking system status:', error);
+    res.status(500).json({ error: 'Failed to check system status' });
   }
 });
 

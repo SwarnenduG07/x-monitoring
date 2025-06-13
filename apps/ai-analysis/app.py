@@ -1,7 +1,6 @@
 import os
 import json
 import time
-import uuid
 import logging
 import sys
 from datetime import datetime
@@ -9,8 +8,9 @@ from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import redis 
 import dotenv
+from functools import wraps
+import asyncio
 
 # Load environment variables
 dotenv.load_dotenv()
@@ -38,21 +38,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Connect to Redis
-redis_client = redis.Redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"))
+# Improved database connection handling
+def get_db_connection():
+    try:
+        db_url = os.getenv("DATABASE_URL")
+        if not db_url:
+            logger.warning("DATABASE_URL not set, using fallback connection string")
+            db_url = "postgresql://x-monitoring_owner:npg_fh9Ne2BmpcLQ@ep-ancient-smoke-a85mqy3p-pooler.eastus2.azure.neon.tech/x-monitoring?sslmode=require"
+        
+        logger.info(f"Connecting to database: {db_url.split('@')[1] if '@' in db_url else 'masked'}")
+        
+        if sys.version_info >= (3, 12):
+            import psycopg
+            return psycopg.connect(db_url)
+        else:
+            import psycopg2
+            from psycopg2.extras import RealDictCursor
+            return psycopg2.connect(db_url)
+    except Exception as e:
+        logger.error(f"Failed to connect to database: {e}")
+        raise HTTPException(status_code=500, detail=f"Database connection failed: {str(e)}")
 
-# Connect to PostgreSQL - Support for both psycopg2 and psycopg v3 based on Python version
-if sys.version_info >= (3, 12):
-    # For Python 3.12+ use psycopg v3
-    import psycopg
-    conn = psycopg.connect(os.getenv("DATABASE_URL", "postgresql://admin:password@localhost:5432/trading_bot"))
-else:
-    # For older Python versions use psycopg2
-    import psycopg2
-    from psycopg2.extras import RealDictCursor
-    conn = psycopg2.connect(os.getenv("DATABASE_URL", "postgresql://admin:password@localhost:5432/trading_bot"))
+# Try to establish database connection
+try:
+    conn = get_db_connection()
+    logger.info("Successfully connected to database")
+except Exception as e:
+    logger.error(f"Initial database connection failed: {e}")
+    conn = None  # We'll retry connections later
 
-# Initialize Gemini API
 import google.generativeai as genai
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -67,7 +81,6 @@ gemini_model = genai.GenerativeModel(
     }
 )
 
-# Define data models
 class AnalysisRequest(BaseModel):
     postId: int
     postText: str
@@ -86,7 +99,6 @@ class AnalysisResponse(BaseModel):
     reasons: Dict[str, List[str]]
     marketConditions: Optional[Dict[str, Any]] = None
 
-# Gemini prompt for analysis
 ANALYSIS_PROMPT_TEMPLATE = """
 You are an AI trading advisor specialized in analyzing social media posts from crypto influencers.
 Your task is to analyze the following post from X (formerly Twitter) and determine if it signals a good buying opportunity for specific tokens.
@@ -156,20 +168,16 @@ async def analyze_with_gemini(post_data: AnalysisRequest) -> Dict[str, Any]:
     response = await gemini_model.generate_content_async(prompt)
     
     try:
-        # Parse the JSON response
         result = json.loads(response.text)
         
-        # Validate required fields
         required_fields = ["sentimentScore", "confidence", "decision", "reasons"]
         for field in required_fields:
             if field not in result:
                 raise ValueError(f"Missing required field: {field}")
         
-        # Validate decision values
         if result["decision"] not in ["buy", "sell", "hold"]:
-            result["decision"] = "hold"  # Default to hold if invalid
+            result["decision"] = "hold"
             
-        # Ensure reasons object has all required arrays
         if not isinstance(result["reasons"], dict):
             result["reasons"] = {
                 "positiveSignals": [],
@@ -211,9 +219,44 @@ async def analyze_with_gemini(post_data: AnalysisRequest) -> Dict[str, Any]:
         logger.error(f"Raw response: {response.text}")
         raise HTTPException(status_code=500, detail=f"Error parsing AI response: {str(e)}")
 
+def with_db_retry(max_retries=3):
+    """Decorator to retry database operations"""
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            global conn
+            retries = 0
+            while retries < max_retries:
+                try:
+                    if conn is None:
+                        conn = get_db_connection()
+                    return await func(*args, **kwargs)
+                except Exception as e:
+                    retries += 1
+                    logger.error(f"Database operation failed (attempt {retries}/{max_retries}): {e}")
+                    
+                    # Try to reconnect
+                    try:
+                        if conn:
+                            conn.close()
+                        conn = get_db_connection()
+                    except Exception as conn_err:
+                        logger.error(f"Failed to reconnect to database: {conn_err}")
+                    
+                    if retries >= max_retries:
+                        raise
+                    
+                    # Wait before retrying
+                    await asyncio.sleep(1 * retries)
+            
+            raise HTTPException(status_code=500, detail="Database operation failed after retries")
+        return wrapper
+    return decorator
+
+@with_db_retry(max_retries=3)
 async def save_analysis_result(analysis_data: Dict[str, Any], post_id: int) -> int:
     """
-    Save the analysis result to the database
+    Save the analysis result to the database with retry logic
     """
     try:
         # Handle both psycopg2 and psycopg v3
@@ -262,25 +305,13 @@ async def save_analysis_result(analysis_data: Dict[str, Any], post_id: int) -> i
                 conn.commit()
                 return analysis_id
     except Exception as e:
-        conn.rollback()
+        if conn:
+            try:
+                conn.rollback()
+            except:
+                pass
         logger.error(f"Database error: {e}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-
-async def publish_analysis_result(analysis_result: Dict[str, Any]) -> None:
-    """
-    Publish the analysis result to Redis
-    """
-    try:
-        message = {
-            "topic": "analysis-result",
-            "data": analysis_result,
-            "timestamp": datetime.now().isoformat(),
-            "messageId": str(uuid.uuid4())
-        }
-        redis_client.publish("analysis-result", json.dumps(message))
-    except Exception as e:
-        logger.error(f"Redis publish error: {e}")
-        # Don't fail the request if publishing fails
 
 async def process_analysis_request(post_data: AnalysisRequest) -> AnalysisResponse:
     """
@@ -306,9 +337,6 @@ async def process_analysis_request(post_data: AnalysisRequest) -> AnalysisRespon
             marketConditions=analysis_result.get("marketConditions")
         )
         
-        # Publish result to Redis
-        await publish_analysis_result(response.dict())
-        
         logger.info(f"Analysis completed for post {post_data.postId}, decision: {response.decision}, confidence: {response.confidence}")
         
         return response
@@ -329,61 +357,53 @@ async def analyze_post(post_data: AnalysisRequest):
 @app.get("/health")
 async def health_check():
     """
-    Health check endpoint
+    Health check endpoint with improved diagnostics
     """
-    # Check Redis connection
-    try:
-        redis_client.ping()
-    except Exception as e:
-        logger.error(f"Redis health check failed: {e}")
-        raise HTTPException(status_code=500, detail="Redis connection failed")
-        
+    status = {
+        "database": "healthy",
+        "gemini_api": "healthy",
+        "overall": "healthy",
+        "details": {}
+    }
+    
     # Check database connection
     try:
+        global conn
+        if conn is None:
+            conn = get_db_connection()
+            
         with conn.cursor() as cursor:
             cursor.execute("SELECT 1")
     except Exception as e:
+        status["database"] = "unhealthy"
+        status["overall"] = "unhealthy"
+        status["details"]["database_error"] = str(e)
         logger.error(f"Database health check failed: {e}")
-        raise HTTPException(status_code=500, detail="Database connection failed")
-        
-    # Check Gemini API key is set
-    if not os.getenv("GEMINI_API_KEY"):
+    
+    # Check Gemini API key
+    gemini_api_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_api_key:
+        status["gemini_api"] = "unhealthy"
+        status["overall"] = "unhealthy"
+        status["details"]["gemini_error"] = "API key not configured"
         logger.error("Gemini API key not set")
-        raise HTTPException(status_code=500, detail="Gemini API key not configured")
-        
-    return {"status": "healthy"}
-
-# Setup Redis subscriber for new posts
-def setup_redis_subscriber():
-    """
-    Setup Redis subscriber to listen for new posts
-    """
-    pubsub = redis_client.pubsub()
-    pubsub.subscribe("new-post")
     
-    logger.info("Redis subscriber started for 'new-post' channel")
+    if status["overall"] == "unhealthy":
+        return status, 503  # Service Unavailable
     
-    for message in pubsub.listen():
-        if message["type"] == "message":
-            try:
-                data = json.loads(message["data"])
-                post_data = AnalysisRequest(**data["data"])
-                
-                # Process the analysis as a background task
-                # Note: In FastAPI context, we'd use BackgroundTasks but here we'll run directly
-                import asyncio
-                asyncio.create_task(process_analysis_request(post_data))
-                
-                logger.info(f"Received new post via Redis: {post_data.postId}")
-            except Exception as e:
-                logger.error(f"Error processing Redis message: {e}")
+    return status
 
-# Start the Redis subscriber in a background thread when the app starts
 @app.on_event("startup")
 async def startup_event():
-    import threading
-    threading.Thread(target=setup_redis_subscriber, daemon=True).start()
-    logger.info("AI Analysis Service started")
+    """Run when the application starts"""
+    global conn
+    try:
+        if conn is None:
+            conn = get_db_connection()
+        logger.info("Database connection successful on startup")
+    except Exception as e:
+        logger.error(f"Failed to connect to database on startup: {e}")
+        # We don't raise an exception here, as we'll retry connections later
 
 if __name__ == "__main__":
     import uvicorn

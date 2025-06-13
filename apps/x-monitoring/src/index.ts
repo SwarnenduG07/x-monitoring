@@ -1,26 +1,43 @@
 import dotenv from 'dotenv';
 import express from 'express';
-import { TwitterApi } from 'twitter-api-v2';
-import { createRedisService, createLogger, XPost, RedisTopic } from '@believe-x/shared';
+import { createLogger, XPost } from '@believe-x/shared';
 import { prisma } from '@believe-x/database';
 import axios from 'axios';
-
+import { TwitterApi } from 'twitter-api-v2';
 
 dotenv.config();
 
 const PORT = process.env.PORT || 3000;
-const MONITORING_INTERVAL = parseInt(process.env.MONITORING_INTERVAL || '5000', 10);
+const MONITORING_INTERVAL = parseInt(process.env.MONITORING_INTERVAL || '60000', 10);
+const TRADE_BOT_URL = process.env.TRADE_BOT_URL || 'http://localhost:3002';
+const AI_ANALYSIS_URL = process.env.AI_ANALYSIS_URL || 'http://localhost:3000';
+const API_GATEWAY_URL = process.env.API_GATEWAY_URL || 'http://localhost:3001';
 
+// Twitter API v2 credentials
+const API_KEY = process.env.TWITTER_API_KEY as string;
+const API_KEY_SECRET = process.env.TWITTER_API_KEY_SECRET as string;
+const ACCESS_TOKEN = process.env.TWITTER_ACCESS_TOKEN as string;
+const ACCESS_TOKEN_SECRET = process.env.TWITTER_ACCESS_TOKEN_SECRET as string;
 
 const app = express();
 const logger = createLogger('x-monitoring');
-const redisService = createRedisService();
-const twitterClient = new TwitterApi(process.env.X_BEARER_TOKEN || '');
-const readOnlyClient = twitterClient.readOnly;
 
+// Initialize Twitter API client
+const twitterClient = new TwitterApi({
+  appKey: API_KEY,
+  appSecret: API_KEY_SECRET,
+  accessToken: ACCESS_TOKEN,
+  accessSecret: ACCESS_TOKEN_SECRET
+});
 
 const latestPostIds = new Map<string, string>();
 
+// Track rate limited accounts with backoff times
+const rateLimitedAccounts = new Map<string, number>();
+
+// Stagger account monitoring to avoid hitting rate limits
+let accountIndex = 0;
+const MAX_ACCOUNTS_PER_CYCLE = 2;
 
 app.use(express.json());
 
@@ -34,6 +51,71 @@ app.get('/health', async (req, res) => {
   }
 });
 
+// Function to get user info from Twitter API v2
+async function getUserFromTwitter(username: string) {
+  try {
+    const user = await twitterClient.v2.userByUsername(username);
+    if (!user.data) {
+      throw new Error(`User not found: ${username}`);
+    }
+    return user.data;
+  } catch (error: any) {
+    logger.error(`Error fetching user from Twitter API: ${error.message}`);
+    throw error;
+  }
+}
+
+// Function to get tweets from Twitter API v2 with improved error handling
+async function getTweetsFromTwitter(userId: string, count: number = 5) {
+  if (!userId || userId.trim() === '') {
+    logger.error('Invalid user ID provided to getTweetsFromTwitter');
+    return [];
+  }
+
+  try {
+    logger.debug(`Fetching tweets for user ID: ${userId}, count: ${count}`);
+    
+    const tweets = await twitterClient.v2.userTimeline(userId, {
+      max_results: count,
+      "tweet.fields": ["created_at", "text", "id"],
+      expansions: ["author_id"]
+    });
+    
+    return tweets.data.data || [];
+  } catch (error: any) {
+    // Handle different error types
+    if (error.message) {
+      // Rate limiting (429)
+      if (error.message.includes('429')) {
+        logger.warn(`Twitter API rate limit reached for user ${userId}. Will retry later.`);
+        return [];
+      }
+      
+      // Invalid request (400)
+      if (error.message.includes('400')) {
+        logger.error(`Invalid request to Twitter API for user ${userId}. Check user ID and parameters.`);
+        
+        // Try to get more details from the error
+        if (error.data && error.data.errors) {
+          logger.error(`Twitter API errors: ${JSON.stringify(error.data.errors)}`);
+        }
+        
+        // Return empty array to prevent continuous errors
+        return [];
+      }
+      
+      // User not found or unauthorized (401, 404)
+      if (error.message.includes('401') || error.message.includes('404')) {
+        logger.error(`User ${userId} not found or unauthorized access. Check credentials and user ID.`);
+        return [];
+      }
+    }
+    
+    logger.error(`Error fetching tweets from Twitter API: ${error.message}`);
+    logger.debug(`Full error: ${JSON.stringify(error)}`);
+    return []; // Return empty array instead of throwing to prevent continuous errors
+  }
+}
 
 app.get('/api/accounts', async (req, res) => {
   try {
@@ -65,18 +147,36 @@ app.post('/api/accounts', async (req, res) => {
       return res.status(200).json(existingAccount);
     }
     
-    const userResult = await readOnlyClient.v2.userByUsername(cleanUsername);
-    const user = userResult.data;
-
-    const account = await prisma.monitoredAccount.create({
-      data: {
-        xAccountId: user.id,
-        xUsername: user.username,
-        displayName: user.name
+    // Get user info from Twitter API
+    try {
+      const userData = await getUserFromTwitter(cleanUsername);
+      
+      if (!userData || !userData.id) {
+        return res.status(404).json({
+          error: 'User not found on Twitter',
+          details: `Could not find user with username: ${cleanUsername}`
+        });
       }
-    });
-    
-    res.status(201).json(account);
+      
+      logger.info(`Found Twitter user: ${cleanUsername}, ID: ${userData.id}`);
+      
+      const account = await prisma.monitoredAccount.create({
+        data: {
+          xAccountId: userData.id,
+          xUsername: userData.username || cleanUsername,
+          displayName: userData.name || cleanUsername
+        }
+      });
+      
+      logger.info(`Successfully created account for ${cleanUsername} with ID ${account.xAccountId}`);
+      res.status(201).json(account);
+    } catch (apiError: any) {
+      logger.error(`Error fetching Twitter user ${cleanUsername}:`, apiError);
+      res.status(500).json({ 
+        error: 'Failed to fetch Twitter user', 
+        details: apiError.message
+      });
+    }
   } catch (error) {
     logger.error('Error adding account:', error);
     res.status(500).json({ error: 'Failed to add account' });
@@ -104,14 +204,14 @@ app.get('/api/active-accounts', async (req, res) => {
 
 app.get('/api/subscriptions', async (req, res) => {
   try {
-    const { tokenSymbol, accountId } = req.query;
+    const { tokenId, accountId } = req.query;
     
     const whereClause: any = {
       active: true
     };
     
-    if (tokenSymbol) {
-      whereClause.tokenSymbol = tokenSymbol as string;
+    if (tokenId) {
+      whereClause.tokenId = parseInt(tokenId as string);
     }
     
     if (accountId) {
@@ -122,7 +222,8 @@ app.get('/api/subscriptions', async (req, res) => {
       where: whereClause,
       include: {
         user: true,
-        account: true
+        account: true,
+        token: true
       }
     });
     
@@ -137,39 +238,91 @@ async function monitorAccounts() {
   try {
     logger.info('Starting monitoring cycle');
     
-    const accounts = await prisma.monitoredAccount.findMany({
+    // Get all accounts with active subscriptions
+    const allAccounts = await prisma.monitoredAccount.findMany({
       where: {
         userSubscriptions: {
           some: {
             active: true
           }
         }
+      },
+      include: {
+        userSubscriptions: {
+          where: {
+            active: true
+          },
+          include: {
+            token: true,
+            user: true
+          }
+        }
       }
     });
     
-    logger.info(`Monitoring ${accounts.length} accounts with active subscriptions`);
+    // Process only a subset of accounts each cycle
+    const startIndex = accountIndex;
+    const endIndex = Math.min(startIndex + MAX_ACCOUNTS_PER_CYCLE, allAccounts.length);
+    const accounts = allAccounts.slice(startIndex, endIndex);
+    
+    // Update index for next cycle
+    accountIndex = endIndex >= allAccounts.length ? 0 : endIndex;
+    
+    logger.info(`Monitoring ${accounts.length} of ${allAccounts.length} accounts with active subscriptions (batch ${startIndex}-${endIndex-1})`);
+    
+    const now = Date.now();
     
     for (const account of accounts) {
+      // Skip rate-limited accounts
+      if (rateLimitedAccounts.has(account.xAccountId)) {
+        const nextAllowedTime = rateLimitedAccounts.get(account.xAccountId)!;
+        if (now < nextAllowedTime) {
+          logger.info(`Skipping rate-limited account @${account.xUsername} until ${new Date(nextAllowedTime).toISOString()}`);
+          continue;
+        } else {
+          // Reset backoff since we're trying again
+          rateLimitedAccounts.delete(account.xAccountId);
+        }
+      }
+      
       const timer = logger.startTimer(`fetch_tweets_${account.xUsername}`);
       
       try {
-        const tweetsResult = await readOnlyClient.v2.userTimeline(account.xAccountId, {
-          max_results: 10,
-          exclude: ['retweets', 'replies'],
-          'tweet.fields': ['created_at', 'id', 'text'],
-          'user.fields': ['id', 'name', 'username']
-        });
+        // Get tweets from Twitter API
+        const tweets = await getTweetsFromTwitter(account.xAccountId, 5); // Reduced from 10 to 5
         
-        const tweets = tweetsResult.data.data || [];
+        if (tweets.length === 0) {
+          // Possible rate limit - implement backoff
+          const backoffTime = rateLimitedAccounts.has(account.xAccountId) 
+            ? Math.min((rateLimitedAccounts.get(account.xAccountId)! - now) * 2, 3600000) // Double previous backoff, max 1 hour
+            : 300000; // Start with 5 minute backoff
+            
+          rateLimitedAccounts.set(account.xAccountId, now + backoffTime);
+          logger.warn(`No tweets returned for @${account.xUsername}, implementing backoff of ${backoffTime/60000} minutes`);
+          continue;
+        }
+        
+        logger.info(`Fetched ${tweets.length} tweets for @${account.xUsername} from Twitter API`);
         
         if (tweets.length > 0) {
-          const latestTweetId = latestPostIds.get(account.xAccountId);
+          // Sort tweets by date (newest first)
+          tweets.sort((a: any, b: any) => {
+            const dateA = new Date(a.created_at);
+            const dateB = new Date(b.created_at);
+            return dateB.getTime() - dateA.getTime();
+          });
+          
+          const latestTweetId = latestPostIds.get(account.xUsername);
           const newTweets = latestTweetId 
-            ? tweets.filter(tweet => tweet.id > latestTweetId)
-            : tweets;
+            ? tweets.filter((tweet: any) => tweet.id > latestTweetId)
+            : tweets.slice(0, 3); // Get only the 3 most recent tweets
           
           if (tweets.length > 0) {
-            latestPostIds.set(account.xAccountId, tweets[0].id);
+            latestPostIds.set(account.xUsername, tweets[0].id);
+          }
+          
+          if (newTweets.length > 0) {
+            logger.info(`Found ${newTweets.length} new tweets for @${account.xUsername}`);
           }
           
           for (const tweet of newTweets) {
@@ -183,36 +336,122 @@ async function monitorAccounts() {
               url: `https://x.com/${account.xUsername}/status/${tweet.id}`
             };
             
-            const savedPost = await prisma.post.create({
-              data: {
-                postId: post.id,
-                accountId: account.id,
-                content: post.text,
-                postUrl: post.url,
-                postedAt: new Date(post.createdAt)
-              }
-            });
-            
+            // Before saving the post, check if it already exists
+            let savedPost;
             try {
-              await axios.post('http://trade-bot:3002/webhook/new-post', {
-                postId: savedPost.id,
-                postText: post.text,
-                authorUsername: post.authorUsername,
-                authorDisplayName: post.authorDisplayName,
-                postUrl: post.url,
-                timestamp: post.createdAt
+              // Check if post already exists
+              const existingPost = await prisma.post.findUnique({
+                where: {
+                  postId: post.id
+                }
               });
-              
-              logger.info(`New post notification sent to trade-bot for @${post.authorUsername}`);
+
+              if (existingPost) {
+                // Post already exists, use it
+                logger.info(`Post ${post.id} already exists in database, skipping creation`);
+                savedPost = existingPost;
+              } else {
+                // Post doesn't exist, create it
+                savedPost = await prisma.post.create({
+                  data: {
+                    postId: post.id,
+                    accountId: account.id,
+                    content: post.text,
+                    postUrl: post.url,
+                    postedAt: new Date(post.createdAt)
+                  }
+                });
+                logger.info(`Created new post record for ID: ${post.id}`);
+              }
             } catch (error) {
-              logger.error(`Error sending post to trade-bot:`, error);
+              logger.error(`Error saving post ${post.id}: ${error}`);
+              continue; // Skip to next tweet
+            }
+            
+            // Group subscriptions by token
+            const tokenSubscriptions = new Map<number, { token: any, users: any[] }>();
+            
+            for (const subscription of account.userSubscriptions) {
+              if (!tokenSubscriptions.has(subscription.tokenId)) {
+                tokenSubscriptions.set(subscription.tokenId, {
+                  token: subscription.token,
+                  users: []
+                });
+              }
+              tokenSubscriptions.get(subscription.tokenId)!.users.push(subscription.user);
+            }
+            
+            // Process each token separately
+            for (const [tokenId, data] of tokenSubscriptions.entries()) {
+              const { token, users } = data;
+              
+              // Skip tokens without a symbol
+              if (!token || typeof token.symbol !== 'string') {
+                logger.warn(`Skipping token without valid symbol: ${JSON.stringify(token)}`);
+                continue;
+              }
+              
+              try {
+                // First, send to AI analysis service
+                const tokenSymbol = token.symbol;
+                const aiAnalysisResponse = await axios.post(`${AI_ANALYSIS_URL}/api/analyze`, {
+                  postId: savedPost.id,
+                  postText: post.text,
+                  authorUsername: post.authorUsername,
+                  authorDisplayName: post.authorDisplayName,
+                  postUrl: post.url,
+                  timestamp: post.createdAt,
+                  tokenSymbols: [tokenSymbol]
+                });
+                
+                logger.info(`AI analysis completed for tweet from @${post.authorUsername} about token ${tokenSymbol}`);
+                
+                // Check if analysis indicates a bullish/optimistic post
+                const analysis = aiAnalysisResponse.data;
+                if (analysis && analysis.decision === 'buy') {
+                  logger.info(`Bullish signal detected for ${tokenSymbol} from tweet by @${post.authorUsername}`);
+                  
+                  // Send to trade-bot with token information and AI analysis
+                  await axios.post(`${TRADE_BOT_URL}/webhook/new-post`, {
+                    postId: savedPost.id,
+                    postText: post.text,
+                    authorUsername: post.authorUsername,
+                    authorDisplayName: post.authorDisplayName,
+                    postUrl: post.url,
+                    timestamp: post.createdAt,
+                    tokenInfo: {
+                      id: token.id,
+                      address: token.address,
+                      symbol: tokenSymbol
+                    },
+                    subscribers: users.map(u => u.telegramId),
+                    analysis: analysis
+                  });
+                  
+                  logger.info(`New bullish post notification sent to trade-bot for @${post.authorUsername} with token ${tokenSymbol}`);
+                } else {
+                  logger.info(`No bullish signal detected for ${tokenSymbol} from tweet by @${post.authorUsername}`);
+                }
+              } catch (error) {
+                logger.error(`Error processing post:`, error);
+              }
             }
             
             logger.info(`New post detected from ${post.authorUsername}: ${post.text.substring(0, 50)}...`);
           }
         }
-      } catch (error) {
-        logger.error(`Error monitoring account ${account.xUsername}:`, error);
+      } catch (error: any) {
+        // If we hit a rate limit, implement exponential backoff
+        if (error.message && error.message.includes('429')) {
+          const backoffTime = rateLimitedAccounts.has(account.xAccountId) 
+            ? Math.min((rateLimitedAccounts.get(account.xAccountId)! - now) * 2, 3600000) // Double previous backoff, max 1 hour
+            : 300000; // Start with 5 minute backoff
+            
+          rateLimitedAccounts.set(account.xAccountId, now + backoffTime);
+          logger.warn(`Rate limit hit for @${account.xUsername}, implementing backoff of ${backoffTime/60000} minutes`);
+        } else {
+          logger.error(`Error monitoring account ${account.xUsername}:`, error);
+        }
       } finally {
         timer();
       }
@@ -224,8 +463,188 @@ async function monitorAccounts() {
   }
 }
 
+// Improved function to verify a Twitter user ID is valid
+async function verifyTwitterUserId(userId: string): Promise<boolean> {
+  if (!userId || userId.trim() === '' || userId.includes('placeholder_')) {
+    logger.warn(`Invalid Twitter user ID format: ${userId}`);
+    return false;
+  }
+  
+  try {
+    const user = await twitterClient.v2.user(userId);
+    return !!user.data;
+  } catch (error) {
+    logger.error(`Failed to verify Twitter user ID ${userId}`);
+    return false;
+  }
+}
+
+// Add a route to refresh user data
+app.post('/api/accounts/:id/refresh', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    
+    if (isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid account ID' });
+    }
+    
+    const account = await prisma.monitoredAccount.findUnique({
+      where: { id }
+    });
+    
+    if (!account) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+    
+    // Try to refresh user data from Twitter
+    try {
+      const userData = await getUserFromTwitter(account.xUsername);
+      
+      if (!userData || !userData.id) {
+        return res.status(404).json({
+          error: 'User not found on Twitter',
+          details: `Could not find user with username: ${account.xUsername}`
+        });
+      }
+      
+      // Update account with fresh data
+      const updatedAccount = await prisma.monitoredAccount.update({
+        where: { id },
+        data: {
+          xAccountId: userData.id,
+          xUsername: userData.username || account.xUsername,
+          displayName: userData.name || account.displayName
+        }
+      });
+      
+      logger.info(`Successfully refreshed account data for ${account.xUsername} with ID ${updatedAccount.xAccountId}`);
+      res.status(200).json(updatedAccount);
+    } catch (apiError: any) {
+      logger.error(`Error refreshing Twitter user ${account.xUsername}:`, apiError);
+      res.status(500).json({ 
+        error: 'Failed to refresh Twitter user', 
+        details: apiError.message
+      });
+    }
+  } catch (error) {
+    logger.error('Error refreshing account:', error);
+    res.status(500).json({ error: 'Failed to refresh account' });
+  }
+});
+
+// Function to check and fix invalid accounts
+async function checkAndFixAccounts() {
+  try {
+    logger.info('Checking for invalid accounts...');
+    
+    const accounts = await prisma.monitoredAccount.findMany();
+    
+    for (const account of accounts) {
+      try {
+        const isValid = await verifyTwitterUserId(account.xAccountId);
+        
+        if (!isValid) {
+          logger.warn(`Invalid Twitter user ID found for ${account.xUsername}: ${account.xAccountId}`);
+          
+          // Try to refresh the account data
+          try {
+            const userData = await getUserFromTwitter(account.xUsername);
+            
+            if (userData && userData.id) {
+              // Update with correct ID
+              await prisma.monitoredAccount.update({
+                where: { id: account.id },
+                data: {
+                  xAccountId: userData.id,
+                  xUsername: userData.username || account.xUsername,
+                  displayName: userData.name || account.displayName
+                }
+              });
+              
+              logger.info(`Fixed account data for ${account.xUsername}, updated ID: ${userData.id}`);
+            }
+          } catch (refreshError) {
+            logger.error(`Could not refresh data for ${account.xUsername}:`, refreshError);
+          }
+        }
+      } catch (verifyError) {
+        logger.error(`Error verifying account ${account.xUsername}:`, verifyError);
+      }
+    }
+    
+    logger.info('Account verification complete');
+  } catch (error) {
+    logger.error('Error checking accounts:', error);
+  }
+}
+
+// Function to clean up invalid accounts in the database
+async function cleanupInvalidAccounts() {
+  try {
+    logger.info('Starting cleanup of invalid accounts...');
+    
+    // Find accounts with placeholder or invalid IDs
+    const accounts = await prisma.monitoredAccount.findMany();
+    let fixedCount = 0;
+    
+    for (const account of accounts) {
+      // Check for obviously invalid IDs
+      if (account.xAccountId.includes('placeholder_') || 
+          !account.xAccountId.match(/^[0-9]+$/) || // Twitter IDs are numeric
+          account.xAccountId.length < 5) { // Twitter IDs are typically longer
+        
+        logger.warn(`Found invalid Twitter ID format: ${account.xAccountId} for user ${account.xUsername}`);
+        
+        try {
+          // Try to get the correct ID from Twitter
+          const userData = await getUserFromTwitter(account.xUsername);
+          
+          if (userData && userData.id) {
+            // Update with correct ID
+            await prisma.monitoredAccount.update({
+              where: { id: account.id },
+              data: {
+                xAccountId: userData.id,
+                xUsername: userData.username || account.xUsername,
+                displayName: userData.name || account.displayName
+              }
+            });
+            
+            logger.info(`Fixed account data for ${account.xUsername}, updated ID from ${account.xAccountId} to ${userData.id}`);
+            fixedCount++;
+          } else {
+            logger.error(`Could not find Twitter user for ${account.xUsername}`);
+          }
+        } catch (error) {
+          logger.error(`Error fixing account ${account.xUsername}:`, error);
+        }
+      }
+    }
+    
+    logger.info(`Account cleanup complete. Fixed ${fixedCount} accounts.`);
+  } catch (error) {
+    logger.error('Error during account cleanup:', error);
+  }
+}
+
+// Add a route to manually trigger account cleanup
+app.post('/api/accounts/cleanup', async (req, res) => {
+  try {
+    logger.info('Manual account cleanup triggered');
+    await cleanupInvalidAccounts();
+    res.status(200).json({ message: 'Account cleanup completed' });
+  } catch (error) {
+    logger.error('Error during manual account cleanup:', error);
+    res.status(500).json({ error: 'Failed to clean up accounts' });
+  }
+});
+
 app.listen(PORT, () => {
   logger.info(`X Monitoring Service running on port ${PORT}`);
-  logger.info(`Monitoring interval: ${MONITORING_INTERVAL}ms`);  
-  monitorAccounts();
+  logger.info(`Monitoring interval: ${MONITORING_INTERVAL}ms`);
+  
+  // Clean up and fix invalid accounts before starting monitoring
+  cleanupInvalidAccounts().then(() => {
+    monitorAccounts();
+  });
 }); 

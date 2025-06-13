@@ -74,13 +74,20 @@ export function setupBotCommands(bot: Telegraf, logger: Logger) {
         xHandle = xHandle.substring(1);
       }
       
-      // Find the user
-      const user = await prisma.telegramUser.findUnique({
-        where: { telegramId: ctx.from.id.toString() }
-      });
-      
-      if (!user) {
-        await ctx.reply('Please start the bot with /start first.');
+      // Find or create the user
+      let user;
+      try {
+        user = await prisma.telegramUser.findUnique({
+          where: { telegramId: ctx.from.id.toString() }
+        });
+        
+        if (!user) {
+          await ctx.reply('Please start the bot with /start first.');
+          return;
+        }
+      } catch (dbError) {
+        logger.error('Database error when finding user:', dbError);
+        await ctx.reply('Database connection error. Please make sure your database is set up correctly.');
         return;
       }
       
@@ -101,44 +108,109 @@ export function setupBotCommands(bot: Telegraf, logger: Logger) {
       await ctx.reply(`✅ Token verified: ${tokenInfo.symbol} (${tokenInfo.name || tokenInfo.symbol})\nProcessing your request to monitor @${xHandle}...`);
       
       try {
-        // Find or create the X account
-        let account = await prisma.monitoredAccount.findFirst({
-          where: { xUsername: xHandle }
-        });
-        
-        if (!account) {
-          // Create the account
-          account = await prisma.monitoredAccount.create({
-            data: {
-              xAccountId: `placeholder_${xHandle}`, // We'll update this later when we actually fetch from X API
-              xUsername: xHandle,
-              displayName: xHandle
-            }
-          });
+        // Check if database tables exist
+        let tablesExist = true;
+        try {
+          await prisma.$queryRaw`SELECT * FROM "tokens" LIMIT 1`;
+        } catch (error) {
+          tablesExist = false;
+          logger.error('Database tables do not exist:', error);
         }
         
-        // Create token first
-        const token = await prisma.token.create({
-          data: {
-            address: tokenAddress,
-            symbol: tokenInfo.symbol,
-            name: tokenInfo.name,
-            chainId: 1
-          }
-        });
+        if (!tablesExist) {
+          await ctx.reply(`✅ Token verified but database tables don't exist yet. Please run:\n\ncd packages/database && npm run db:push\n\nThen try registering again.`);
+          return;
+        }
         
-        // Then create subscription with the token ID
-        await prisma.userSubscription.create({
-          data: {
-            userId: user.id,
-            accountId: account.id,
-            tokenId: token.id,
-            active: true
+        // Find or create the X account
+        let account;
+        try {
+          account = await prisma.monitoredAccount.findFirst({
+            where: { xUsername: xHandle }
+          });
+          
+          if (!account) {
+            // Create the account
+            account = await prisma.monitoredAccount.create({
+              data: {
+                xAccountId: `placeholder_${xHandle}`, // We'll update this later when we actually fetch from X API
+                xUsername: xHandle,
+                displayName: xHandle
+              }
+            });
           }
-        });
+        } catch (dbError) {
+          logger.error('Database error when finding/creating account:', dbError);
+          await ctx.reply('Error creating account in the database. Please check your database connection.');
+          return;
+        }
         
-        await ctx.reply(`✅ Successfully registered to monitor @${xHandle} for ${tokenInfo.symbol} tokens!`);
-        logger.info(`User ${user.id} registered to monitor @${xHandle} for ${tokenInfo.symbol} (${tokenInfo.address})`);
+        // Find or create the token
+        let token;
+        try {
+          token = await prisma.token.findFirst({
+            where: { address: tokenAddress }
+          });
+          
+          if (!token) {
+            // Create the token
+            token = await prisma.token.create({
+              data: {
+                address: tokenAddress,
+                symbol: tokenInfo.symbol,
+                name: tokenInfo.name,
+                chainId: 1
+              }
+            });
+          }
+        } catch (dbError) {
+          logger.error('Database error when finding/creating token:', dbError);
+          await ctx.reply('Error creating token in the database. Please check your database connection.');
+          return;
+        }
+        
+        // Create or update the subscription
+        try {
+          // Check if subscription already exists
+          const existingSubscription = await prisma.userSubscription.findFirst({
+            where: {
+              userId: user.id,
+              accountId: account.id,
+              tokenId: token.id
+            }
+          });
+          
+          if (existingSubscription) {
+            if (!existingSubscription.active) {
+              // Reactivate the subscription
+              await prisma.userSubscription.update({
+                where: { id: existingSubscription.id },
+                data: { active: true }
+              });
+              
+              await ctx.reply(`✅ Successfully reactivated your subscription to monitor @${xHandle} for ${tokenInfo.symbol} tokens!`);
+            } else {
+              await ctx.reply(`You are already monitoring @${xHandle} for ${tokenInfo.symbol} tokens.`);
+            }
+            return;
+          }
+          
+          // Create new subscription
+          await prisma.userSubscription.create({
+            data: {
+              userId: user.id,
+              accountId: account.id,
+              tokenId: token.id,
+              active: true
+            }
+          });
+          
+          await ctx.reply(`✅ Successfully registered to monitor @${xHandle} for ${tokenInfo.symbol} tokens!`);
+          logger.info(`User ${user.id} registered to monitor @${xHandle} for ${tokenInfo.symbol} (${tokenInfo.address})`);
+        } catch (dbError) {
+          logger.error('Database error when creating subscription:', dbError);
+          await ctx.reply('Error creating subscription in the database. Please check your database connection.');
+        }
       } catch (error) {
         logger.error('Error registering subscription:', error);
         await ctx.reply('Sorry, I could not register your subscription. Please try again later.');
