@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 import express from 'express';
-import { Connection, Keypair, PublicKey, Transaction } from '@solana/web3.js';
-import { createJupiterApiClient  } from '@jup-ag/api';
+import { Connection, Keypair, PublicKey, VersionedTransaction } from '@solana/web3.js';
+import { createJupiterApiClient } from '@jup-ag/api';
 import { createRedisService, createLogger, RedisTopic } from '@believe-x/shared';
 import { prisma, AnalysisResult, TradeResult } from '@believe-x/database';
 import bs58 from 'bs58';
@@ -23,6 +23,11 @@ const redisService = createRedisService();
 
 // Initialize Solana connection
 const connection = new Connection(SOLANA_RPC_URL);
+
+// Initialize Jupiter API client
+const jupiterApi = createJupiterApiClient({
+  basePath: process.env.JUPITER_API_ENDPOINT || 'https://quote-api.jup.ag/v6'
+});
 
 // Wallet setup
 let wallet: Keypair | undefined;
@@ -152,67 +157,65 @@ async function executeTrade(analysisResult: AnalysisResult): Promise<TradeResult
           }
         });
         
-        // Setup Jupiter
-        const jupiter = await Jupiter.load({
-          connection,
-          cluster: 'mainnet-beta',
-          user: wallet
-        });
-        
-        // Calculate the amount of USDC to swap
-        const inputToken = tokenMap['USDC'];
+        // Input and output tokens
+        const inputToken = tokenMap['USDC']; // Using USDC as base currency
         const outputToken = tokenMap[tokenSymbol];
         
-        // Find routes
-        const routes = await jupiter.computeRoutes({
-          inputMint: new PublicKey(inputToken),
-          outputMint: new PublicKey(outputToken),
-          amount: BigInt(tradeAmountUSD * 1000000), // USDC has 6 decimals
+        // 1. Get a quote for the swap
+        const quoteResponse = await jupiterApi.quoteGet({
+          inputMint: inputToken,
+          outputMint: outputToken,
+          amount: Math.floor(tradeAmountUSD * 1000000), // USDC has 6 decimals
           slippageBps: 50 // 0.5% slippage
         });
         
-        if (routes.routesInfos.length === 0) {
-          logger.error(`No routes found for ${inputToken} to ${outputToken}`);
+        if (!quoteResponse) {
+          logger.error(`No quote found for ${inputToken} to ${outputToken}`);
           
-          // Update trade record
           await prisma.trade.update({
             where: { id: trade.id },
             data: {
               status: 'failed',
-              errorMessage: 'No routes found'
+              errorMessage: 'No quote found'
             }
           });
           
           return null;
         }
         
-        const bestRoute = routes.routesInfos[0];
-        
-        // Execute the swap
-        const { execute } = await jupiter.exchange({
-          routeInfo: bestRoute
+        // 2. Get the swap transaction
+        const swapResponse = await jupiterApi.swapPost({
+          swapRequest: {
+            quoteResponse,
+            userPublicKey: wallet.publicKey.toString(),
+            wrapAndUnwrapSol: true,
+            dynamicComputeUnitLimit: true,
+            prioritizationFeeLamports: 'auto'
+          }
         });
         
-        const result = await execute();
+        // 3. Deserialize and sign the transaction
+        const swapTransactionBuf = Buffer.from(swapResponse.swapTransaction, 'base64');
+        const transaction = VersionedTransaction.deserialize(swapTransactionBuf);
         
-        if (result.error) {
-          logger.error(`Error executing trade: ${result.error}`);
-          
-          // Update trade record
-          await prisma.trade.update({
-            where: { id: trade.id },
-            data: {
-              status: 'failed',
-              errorMessage: result.error.toString()
-            }
-          });
-          
-          return null;
-        }
+        transaction.sign([wallet]);
         
-        // Update trade record with successful transaction
-        const outputAmount = Number(bestRoute.outAmount) / 10 ** 9; // Assuming 9 decimals for most tokens
-        const txid = result.txid;
+        // 4. Execute the transaction
+        const rawTransaction = transaction.serialize();
+        const txid = await connection.sendRawTransaction(rawTransaction, {
+          skipPreflight: true,
+          maxRetries: 2
+        });
+        
+        // 5. Confirm the transaction
+        await connection.confirmTransaction({
+          blockhash: swapResponse.blockhash,
+          lastValidBlockHeight: swapResponse.lastValidBlockHeight,
+          signature: txid
+        });
+        
+        // 6. Update trade record with successful transaction
+        const outputAmount = parseInt(quoteResponse.outAmount) / (10 ** 9); // Assuming 9 decimals for most tokens
         
         const updatedTrade = await prisma.trade.update({
           where: { id: trade.id },

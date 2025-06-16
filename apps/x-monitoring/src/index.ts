@@ -35,7 +35,7 @@ const latestPostIds = new Map<string, string>();
 // Track rate limited accounts with backoff times
 const rateLimitedAccounts = new Map<string, number>();
 
-// Stagger account monitoring to avoid hitting rate limits
+
 let accountIndex = 0;
 const MAX_ACCOUNTS_PER_CYCLE = 2;
 
@@ -47,7 +47,7 @@ app.get('/health', async (req, res) => {
     res.status(200).json({ status: 'ok' });
   } catch (error) {
     logger.error('Health check failed', error);
-    res.status(500).json({ status: 'error', message: 'Database connection failed' });
+    res.status(500).json({ status: 'error', message: 'Data1`  ₹ase connection failed' });
   }
 });
 
@@ -64,8 +64,8 @@ async function getUserFromTwitter(username: string) {
     throw error;
   }
 }
-
-// Function to get tweets from Twitter API v2 with improved error handling
+ 
+//  Function to get tweets from Twitter API v2 with improved error handling
 async function getTweetsFromTwitter(userId: string, count: number = 5) {
   if (!userId || userId.trim() === '') {
     logger.error('Invalid user ID provided to getTweetsFromTwitter');
