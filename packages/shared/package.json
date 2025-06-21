@@ -1,22 +1,22 @@
 {
-  "name": "@believe-x/shared",
-  "version": "1.0.0",
-  "description": "Shared utilities and types for Believe X AI Trading Bot",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
-    "lint": "eslint src/**/*.ts",
-    "clean": "rm -rf dist"
-  },
-  "dependencies": {
-    "ioredis": "^5.3.2",
-    "uuid": "^9.0.1"
-  },
-  "devDependencies": {
-    "@types/uuid": "^9.0.7",
-    "eslint": "^8.56.0",
-    "typescript": "^5.3.3"
-  }
-} 
+	"name": "@believe-x/shared",
+	"version": "1.0.0",
+	"description": "Shared utilities and types for Believe X AI Trading Bot",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"scripts": {
+		"build": "tsc",
+		"dev": "tsc --watch",
+		"lint": "eslint src/**/*.ts",
+		"clean": "rm -rf dist"
+	},
+	"dependencies": {
+		"ioredis": "^5.3.2",
+		"uuid": "^9.0.1"
+	},
+	"devDependencies": {
+		"@types/uuid": "^9.0.7",
+		"eslint": "^8.56.0",
+		"typescript": "^5.3.3"
+	}
+}
