@@ -444,6 +444,9 @@ async function monitorAccounts() {
 										timestamp: post.createdAt,
 										tokenSymbols: [tokenSymbol],
 									},
+									{
+										timeout: 30000, // 30 second timeout
+									}
 								);
 
 								logger.info(
@@ -454,7 +457,7 @@ async function monitorAccounts() {
 								const analysis = aiAnalysisResponse.data;
 								if (analysis && analysis.decision === "buy") {
 									logger.info(
-										`Bullish signal detected for ${tokenSymbol} from tweet by @${post.authorUsername}`,
+										`Bullish signal detected for ${tokenSymbol} from tweet by @${post.authorUsername} (confidence: ${analysis.confidence})`,
 									);
 
 									// Send to trade-bot with token information and AI analysis
@@ -479,11 +482,11 @@ async function monitorAccounts() {
 									);
 								} else {
 									logger.info(
-										`No bullish signal detected for ${tokenSymbol} from tweet by @${post.authorUsername}`,
+										`No bullish signal detected for ${tokenSymbol} from tweet by @${post.authorUsername} (decision: ${analysis?.decision || 'unknown'})`,
 									);
 								}
 							} catch (error) {
-								logger.error(`Error processing post:`, error);
+								logger.error(`Error processing post for token ${token.symbol}:`, error);
 							}
 						}
 
