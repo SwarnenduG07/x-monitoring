@@ -1,6 +1,7 @@
 {
 	"name": "believe-x-ai-trading-bot",
 	"version": "1.0.0",
+	"packageManager": "bun@1.1.38",
 	"description": "AI-powered X monitoring and trading bot using Gemini 1.5 Pro and Solana",
 	"private": true,
 	"workspaces": [
@@ -8,9 +9,12 @@
 		"packages/*"
 	],
 	"scripts": {
-		"build": "turbo run build",
-		"dev": "turbo run dev",
-		"start": "turbo run start",
+		"build": "turbo run build --filter='!@believe-x/trading-orchestrator'",
+		"build:all": "turbo run build",
+		"dev": "turbo run dev --filter='!@believe-x/trading-orchestrator'",
+		"dev:all": "turbo run dev",
+		"start": "turbo run start --filter='!@believe-x/trading-orchestrator'",
+		"start:all": "turbo run start",	
 		"lint": "turbo run lint",
 		"test": "turbo run test",
 		"format": "prettier --write \"**/*.{ts,tsx,md}\"",

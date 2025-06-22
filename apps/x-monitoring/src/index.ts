@@ -13,10 +13,10 @@ const MONITORING_INTERVAL = parseInt(
 	10,
 );
 const TRADE_BOT_URL = process.env.TRADE_BOT_URL || "http://localhost:3002";
-const AI_ANALYSIS_URL = process.env.AI_ANALYSIS_URL || "http://localhost:3000";
+const AI_ANALYSIS_URL = process.env.AI_ANALYSIS_URL || "http://localhost:8000";
 const API_GATEWAY_URL = process.env.API_GATEWAY_URL || "http://localhost:3001";
 
-// Twitter API v2 credentials
+
 const API_KEY = process.env.TWITTER_API_KEY as string;
 const API_KEY_SECRET = process.env.TWITTER_API_KEY_SECRET as string;
 const ACCESS_TOKEN = process.env.TWITTER_ACCESS_TOKEN as string;
@@ -25,7 +25,6 @@ const ACCESS_TOKEN_SECRET = process.env.TWITTER_ACCESS_TOKEN_SECRET as string;
 const app = express();
 const logger = createLogger("x-monitoring");
 
-// Initialize Twitter API client
 const twitterClient = new TwitterApi({
 	appKey: API_KEY,
 	appSecret: API_KEY_SECRET,
@@ -35,7 +34,6 @@ const twitterClient = new TwitterApi({
 
 const latestPostIds = new Map<string, string>();
 
-// Track rate limited accounts with backoff times
 const rateLimitedAccounts = new Map<string, number>();
 
 let accountIndex = 0;
