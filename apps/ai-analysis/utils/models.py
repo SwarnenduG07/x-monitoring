@@ -17,4 +17,15 @@ class AnalysisResponse(BaseModel):
     confidence: float
     decision: str
     reasons: Dict[str, List[str]]
+    marketConditions: Optional[Dict[str, Any]] = None
+
+class SimpleBatchAnalysisRequest(BaseModel):
+    posts: List[AnalysisRequest]
+    tokenSymbols: List[str]
+
+class SimpleBatchAnalysisResponse(BaseModel):
+    sentimentScore: float
+    confidence: float
+    decision: str
+    reasons: Dict[str, List[str]]
     marketConditions: Optional[Dict[str, Any]] = None 
