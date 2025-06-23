@@ -1,13 +1,13 @@
 import {
 	type AnalysisResult,
 	prisma,
-	type TradeResult,
 } from "@believe-x/database";
 import {
 	createLogger,
 	createRedisService,
 	type NotificationMessage,
 	RedisTopic,
+	type TradeResult,
 	type XPost,
 } from "@believe-x/shared";
 import dotenv from "dotenv";

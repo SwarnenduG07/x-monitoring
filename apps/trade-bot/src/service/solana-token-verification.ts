@@ -3,7 +3,7 @@ import axios from "axios";
 
 const logger = createLogger("solana-token-verification");
 
-// Define interfaces
+
 export interface SolanaTokenInfo {
 	address: string;
 	symbol: string;
@@ -12,7 +12,7 @@ export interface SolanaTokenInfo {
 	market?: boolean;
 }
 
-// Known tokens - hardcoded for reliability
+
 const KNOWN_TOKENS: Record<string, SolanaTokenInfo> = {
 	Es9vMFrzaCERCLwKzHnh6mFYHTxgdRJrQbz6bG3y5QNo: {
 		address: "Es9vMFrzaCERCLwKzHnh6mFYHTxgdRJrQbz6bG3y5QNo",
@@ -92,7 +92,7 @@ async function tryMultipleAPIs(
 					symbol: token.symbol,
 					name: token.name || token.symbol,
 					decimals: token.decimals || 9,
-					market: true, // Jupiter only lists traded tokens
+					market: true, 
 				};
 			}
 		}

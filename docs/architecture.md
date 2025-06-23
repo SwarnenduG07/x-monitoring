@@ -6,16 +6,18 @@ The Believe X AI Trading Bot uses a microservices architecture with event-driven
 
 ## Components
 
-1. **API Gateway**: Acts as the entry point for external requests and orchestrates communication between services.
+1. **NGinx as API getway**: Acts as the entry point for external requests and orchestrates communication between services.
 2. **X Monitoring Service**: Polls the X API every 5 seconds to check for new posts from monitored accounts.
 3. **AI Analysis Service**: Processes posts using Gemini 1.5 Pro for sentiment analysis and trading decisions.
 4. **Trading Orchestrator**: Manages trade execution via Jupiter DEX on Solana.
-5. **Notification Service**: Sends updates about monitoring and trading activities to Telegram.
+5. **Trade-bot**: Works as a user interface from sending token id and account same for monitoring.
+
+## Features in pipeline
 6. **Model Training Service**: Improves AI models over time based on historical data and outcomes.
 7. **Data Preprocessing Service**: Prepares data for AI analysis and model training.
 
 ## Data Flow
-
+1. User send the token id and accoutn same in telegram
 1. X Monitoring Service detects a new post and publishes it to the "new-posts" topic.
 2. AI Analysis Service subscribes to "new-posts" topic, processes the post, and publishes results to "analysis-results".
 3. Trading Orchestrator subscribes to "analysis-results" topic and executes trades based on analysis.
@@ -26,7 +28,7 @@ The Believe X AI Trading Bot uses a microservices architecture with event-driven
 - **Databases**: PostgreSQL for persistent storage, Redis for caching and message broker.
 - **Containerization**: Docker for development and production.
 - **Monitoring**: Prometheus for metrics collection and Grafana for visualization.
-- **Orchestration**: Kubernetes for production deployment (optional).
+- **Orchestration**: Kubernetes for production deployment (Gonna do later but don't needed).
 
 ## Network Topology
 

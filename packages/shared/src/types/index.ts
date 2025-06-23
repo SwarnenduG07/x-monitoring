@@ -7,6 +7,7 @@ export interface XPost {
 	authorDisplayName: string;
 	createdAt: string;
 	url: string;
+	postUrl?: string;
 }
 
 export interface MonitoredAccount {
