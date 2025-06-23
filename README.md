@@ -2,6 +2,12 @@
 
 An AI-powered X (Twitter) monitoring and trading bot that uses Gemini 1.5 Pro for sentiment analysis and Solana for trading execution.
 
+## System design
+
+![image](https://github.com/user-attachments/assets/c3afa724-a57f-415f-a777-39993855e6d9)
+
+
+
 ## Architecture
 
 This project uses a modern monorepo structure with Turborepo for efficient builds and dependency management. It consists of the following services:
@@ -9,7 +15,6 @@ This project uses a modern monorepo structure with Turborepo for efficient build
 - **X Monitoring Service**: Monitors X accounts for new posts
 - **AI Analysis Service**: Analyzes posts using Gemini 1.5 Pro to make trading decisions
 - **Trading Orchestrator**: Executes trades based on analysis results
-- **Notification Service**: Sends notifications via Telegram
 - **API Gateway**: Provides a unified API for frontend applications
 
 ## Technology Stack
@@ -59,7 +64,7 @@ This project uses a modern monorepo structure with Turborepo for efficient build
 │   ├── x-monitoring/      # X monitoring service
 │   ├── ai-analysis/       # AI analysis service
 │   ├── trading-orchestrator/ # Trading execution service
-│   ├── notification-service/ # Notification service
+│   ├
 │   └── api-gateway/       # API gateway service
 ├── packages/              # Shared libraries
 │   ├── database/          # Database layer with Prisma ORM
@@ -86,9 +91,6 @@ npm run dev
 cd apps/trading-orchestrator
 npm run dev
 
-# Notification Service
-cd apps/notification-service
-npm run dev
 
 # API Gateway
 cd apps/api-gateway
