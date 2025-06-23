@@ -2,7 +2,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import dotenv
-from router import ai_analysis, health
+from router import ai_analysis, health, test
 from utils.database import init_db_connection
 
 # Load environment variables
@@ -34,13 +34,13 @@ app.add_middleware(
 # Include routers
 app.include_router(ai_analysis.router, prefix="/api", tags=["ai-analysis"])
 app.include_router(health.router, tags=["health"])
+app.include_router(test.router, prefix="/api", tags=["test"])
 
 @app.on_event("startup")
 async def startup_event():
     """Run when the application starts"""
     logger.info("Starting AI Analysis Service...")
     
-    # Initialize database connection
     db_success = init_db_connection()
     if db_success:
         logger.info("Database connection successful on startup")
