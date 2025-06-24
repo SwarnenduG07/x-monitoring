@@ -4,8 +4,8 @@
 	"description": "Telegram Bot Service for Believe X AI Trading Bot",
 	"main": "dist/index.js",
 	"scripts": {
-		"build": "tsc",
-		"dev": "ts-node-dev --respawn src/index.ts",
+		"build": "tsc-b",
+		"dev": "tsc -b && node dist/index.js",
 		"start": "node dist/index.js",
 		"lint": "eslint src/**/*.ts",
 		"test": "jest",
