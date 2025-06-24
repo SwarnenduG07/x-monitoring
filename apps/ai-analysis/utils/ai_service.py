@@ -14,14 +14,15 @@ logger = logging.getLogger(__name__)
 # Configure Gemini AI
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 gemini_model = genai.GenerativeModel(
-    model_name="gemini-1.5-pro",
+    model_name="gemini-2.5-flash",
     generation_config={
         "temperature": 0.2,
         "top_p": 0.95,
         "top_k": 40,
-        "response_mime_type": "application/json",
     }
 )
+
+logger.info(f"using ai model {gemini_model.model_name}")
 
 @retry(
     stop=stop_after_attempt(3), 
@@ -49,7 +50,7 @@ async def analyze_with_gemini(post_data: Dict[str, Any]) -> Dict[str, Any]:
         
         response = await gemini_model.generate_content_async(prompt)
         
-        result = json.loads(response.text)
+        result = extract_json_from_response(response.text)
         
         # Validate required fields
         required_fields = ["sentimentScore", "confidence", "decision", "reasons"]
@@ -136,7 +137,7 @@ async def analyze_batch_with_gemini(posts_data: list, token_symbols: list) -> Di
         
         response = await gemini_model.generate_content_async(prompt)
         
-        result = json.loads(response.text)
+        result = extract_json_from_response(response.text)
         
         # Validate required fields
         required_fields = ["sentimentScore", "confidence", "decision", "reasons"]
@@ -200,3 +201,24 @@ def check_gemini_api_key():
     """Check if Gemini API key is configured"""
     gemini_api_key = os.getenv("GEMINI_API_KEY")
     return bool(gemini_api_key), "API key not configured" if not gemini_api_key else None 
+
+def extract_json_from_response(response_text: str) -> Dict[str, Any]:
+    """Extract JSON from response text, handling potential markdown formatting"""
+    text = response_text.strip()
+    
+    # Remove markdown code block formatting if present
+    if text.startswith("```json"):
+        text = text[7:]
+    elif text.startswith("```"):
+        text = text[3:]
+    
+    if text.endswith("```"):
+        text = text[:-3]
+    
+    text = text.strip()
+    
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse JSON from response: {text[:200]}...")
+        raise ValueError(f"Invalid JSON response from AI: {e}") 
