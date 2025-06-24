@@ -30,26 +30,31 @@ services:
       timeout: 5s
       retries: 5
 
-  # TypeScript Services
-  api-gateway:
+  # Add nginx as the main entry point
+  nginx:
     build:
-      context: .
-      dockerfile: apps/api-gateway/Dockerfile
+      context: ./nginx
+      dockerfile: dockerfile
     ports:
-      - "3000:3000"
-    environment:
-      - NODE_ENV=${NODE_ENV:-development}
-      - REDIS_URL=redis://redis:6379
-      - PORT=3000
+      - "80:80"
+      - "443:443"
     depends_on:
-      redis:
-        condition: service_healthy
+      - x-monitoring
+      - ai-analysis
+      - trade-bot
+      - trading-orchestrator
     restart: unless-stopped
+
+  # Remove api-gateway service entirely
+  # api-gateway: <- DELETE THIS ENTIRE SERVICE
 
   x-monitoring:
     build:
       context: .
       dockerfile: apps/x-monitoring/Dockerfile
+    # Remove external port mapping since nginx will handle routing
+    # ports:
+    #   - "3000:3000"
     environment:
       - NODE_ENV=${NODE_ENV:-development}
       - REDIS_URL=redis://redis:6379
@@ -84,17 +89,22 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  notification-service:
+  trade-bot:
     build:
       context: .
-      dockerfile: apps/notification-service/Dockerfile
+      dockerfile: apps/trade-bot/DockerFile
     environment:
       - NODE_ENV=${NODE_ENV:-development}
       - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-trading_bot}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - X_MONITORING_URL=http://x-monitoring:3000
+      - AI_ANALYSIS_URL=http://ai-analysis:8000
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   # Python Services
@@ -106,8 +116,9 @@ services:
       - REDIS_URL=redis://redis:6379
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-trading_bot}
-    ports:
-      - "8000:8000"
+    # Remove external port mapping
+    # ports:
+    #   - "8000:8000"
     depends_on:
       redis:
         condition: service_healthy

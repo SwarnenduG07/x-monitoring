@@ -10,11 +10,7 @@ import { postRouter } from "./routes/webhook/postRouter";
 dotenv.config();
 
 const PORT = process.env.PORT || 3002;
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-const API_GATEWAY_URL = process.env.API_GATEWAY_URL || "http://localhost:3001";
-const AI_ANALYSIS_URL = process.env.AI_ANALYSIS_URL || "http://localhost:8000";
-const X_MONITORING_URL =
-	process.env.X_MONITORING_URL || "http://localhost:3000";
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || ""
 
 if (!TELEGRAM_BOT_TOKEN) {
 	console.error("TELEGRAM_BOT_TOKEN is required");

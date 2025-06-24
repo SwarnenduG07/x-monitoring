@@ -5,7 +5,6 @@ import { prisma } from "@believe-x/database";
 
 const router = Router();
 
-const API_GATEWAY_URL = process.env.API_GATEWAY_URL || "http://localhost:3001";
 const TRADING_ORCHESTRATOR_URL = process.env.TRADING_ORCHESTRATOR_URL || "http://localhost:3003";
 
 router.post("/webhook/new-post", async (req, res) => {
