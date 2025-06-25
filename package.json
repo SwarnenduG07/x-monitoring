@@ -14,7 +14,7 @@
 		"dev": "turbo run dev --filter='!@believe-x/trading-orchestrator'",
 		"dev:all": "turbo run dev",
 		"start": "turbo run start --filter='!@believe-x/trading-orchestrator'",
-		"start:all": "turbo run start",	
+		"start:all": "turbo run start",
 		"lint": "turbo run lint",
 		"test": "turbo run test",
 		"format": "prettier --write \"**/*.{ts,tsx,md}\"",

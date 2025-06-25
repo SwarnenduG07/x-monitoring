@@ -29,7 +29,7 @@ app.use("/api/subscriptions", subscriptionsRouter);
 
 app.listen(PORT, () => {
 	logger.info(`X Monitoring Service running on port ${PORT}`);
-	
+
 	// Initialize application
 	cleanupInvalidAccounts().then(() => {
 		startMonitoring();

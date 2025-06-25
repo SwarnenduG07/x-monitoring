@@ -98,4 +98,4 @@ export async function verifyTwitterUserId(userId: string): Promise<boolean> {
 		logger.error(`Failed to verify Twitter user ID ${userId}`);
 		return false;
 	}
-} 
+}

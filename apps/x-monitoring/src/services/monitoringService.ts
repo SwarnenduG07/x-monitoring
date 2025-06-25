@@ -22,7 +22,6 @@ export async function monitorAccounts() {
 	try {
 		logger.info("Starting monitoring cycle");
 
-
 		const allAccounts = await prisma.monitoredAccount.findMany({
 			where: {
 				userSubscriptions: {
@@ -75,15 +74,15 @@ export async function monitorAccounts() {
 			const timer = logger.startTimer(`fetch_tweets_${account.xUsername}`);
 
 			try {
-				const tweets = await getTweetsFromTwitter(account.xAccountId, 5); 
+				const tweets = await getTweetsFromTwitter(account.xAccountId, 5);
 
 				if (tweets.length === 0) {
 					const backoffTime = rateLimitedAccounts.has(account.xAccountId)
 						? Math.min(
 								(rateLimitedAccounts.get(account.xAccountId)! - now) * 2,
 								3600000,
-							) 
-						: 300000; 
+							)
+						: 300000;
 
 					rateLimitedAccounts.set(account.xAccountId, now + backoffTime);
 					logger.warn(
@@ -97,7 +96,6 @@ export async function monitorAccounts() {
 				);
 
 				if (tweets.length > 0) {
-				
 					tweets.sort((a: any, b: any) => {
 						const dateA = new Date(a.created_at);
 						const dateB = new Date(b.created_at);
@@ -107,7 +105,7 @@ export async function monitorAccounts() {
 					const latestTweetId = latestPostIds.get(account.xUsername);
 					const newTweets = latestTweetId
 						? tweets.filter((tweet: any) => tweet.id > latestTweetId)
-						: tweets.slice(0, 3); 
+						: tweets.slice(0, 3);
 
 					if (tweets.length > 0) {
 						latestPostIds.set(account.xUsername, tweets[0].id);
@@ -138,7 +136,9 @@ export async function monitorAccounts() {
 								});
 
 								if (existingPost) {
-									logger.info(`Post ${post.id} already exists in database, skipping creation`);
+									logger.info(
+										`Post ${post.id} already exists in database, skipping creation`,
+									);
 									savedPost = existingPost;
 								} else {
 									savedPost = await prisma.post.create({
@@ -159,7 +159,10 @@ export async function monitorAccounts() {
 						}
 
 						// Process batch analysis for each token
-						const tokenSubscriptions = new Map<number, { token: any; users: any[] }>();
+						const tokenSubscriptions = new Map<
+							number,
+							{ token: any; users: any[] }
+						>();
 						for (const subscription of account.userSubscriptions) {
 							if (!tokenSubscriptions.has(subscription.tokenId)) {
 								tokenSubscriptions.set(subscription.tokenId, {
@@ -167,7 +170,9 @@ export async function monitorAccounts() {
 									users: [],
 								});
 							}
-							tokenSubscriptions.get(subscription.tokenId)!.users.push(subscription.user);
+							tokenSubscriptions
+								.get(subscription.tokenId)!
+								.users.push(subscription.user);
 						}
 
 						// Process each token with batch analysis
@@ -175,13 +180,15 @@ export async function monitorAccounts() {
 							const { token, users } = data;
 
 							if (!token || typeof token.symbol !== "string") {
-								logger.warn(`Skipping token without valid symbol: ${JSON.stringify(token)}`);
+								logger.warn(
+									`Skipping token without valid symbol: ${JSON.stringify(token)}`,
+								);
 								continue;
 							}
 
 							try {
 								const tokenSymbol = token.symbol;
-								
+
 								// Prepare batch analysis request
 								const batchAnalysisRequest = {
 									posts: savedPosts.map(({ post, savedPost }) => ({
@@ -196,7 +203,9 @@ export async function monitorAccounts() {
 									tokenSymbols: [tokenSymbol],
 								};
 
-								logger.info(`Sending batch analysis for ${savedPosts.length} tweets about token ${tokenSymbol}`);
+								logger.info(
+									`Sending batch analysis for ${savedPosts.length} tweets about token ${tokenSymbol}`,
+								);
 
 								// Send batch analysis request
 								const aiAnalysisResponse = await axios.post(
@@ -204,7 +213,7 @@ export async function monitorAccounts() {
 									batchAnalysisRequest,
 									{
 										timeout: 60000, // Increased timeout for batch processing
-									}
+									},
 								);
 
 								logger.info(
@@ -242,20 +251,29 @@ export async function monitorAccounts() {
 									);
 								} else {
 									logger.info(
-										`No bullish signal detected for ${tokenSymbol} from ${savedPosts.length} tweets by @${account.xUsername} (decision: ${analysis?.decision || 'unknown'})`,
+										`No bullish signal detected for ${tokenSymbol} from ${savedPosts.length} tweets by @${account.xUsername} (decision: ${analysis?.decision || "unknown"})`,
 									);
 								}
 							} catch (error: any) {
-								if (error.code === 'ECONNREFUSED') {
-									logger.error(`AI Analysis service is not available for token ${token.symbol}. Skipping batch analysis.`);
+								if (error.code === "ECONNREFUSED") {
+									logger.error(
+										`AI Analysis service is not available for token ${token.symbol}. Skipping batch analysis.`,
+									);
 								} else if (error.response?.status === 500) {
-									logger.error(`AI Analysis batch service error for token ${token.symbol}: ${error.response?.data?.detail || error.message}`);
+									logger.error(
+										`AI Analysis batch service error for token ${token.symbol}: ${error.response?.data?.detail || error.message}`,
+									);
 								} else if (error.response?.status === 429) {
-									logger.warn(`Rate limit hit for batch analysis of token ${token.symbol}. Will retry later.`);
+									logger.warn(
+										`Rate limit hit for batch analysis of token ${token.symbol}. Will retry later.`,
+									);
 
-									rateLimitedAccounts.set(account.xAccountId, now + 900000); 
+									rateLimitedAccounts.set(account.xAccountId, now + 900000);
 								} else {
-									logger.error(`Error processing batch AI analysis for token ${token.symbol}:`, error.message);
+									logger.error(
+										`Error processing batch AI analysis for token ${token.symbol}:`,
+										error.message,
+									);
 								}
 							}
 						}
@@ -275,8 +293,8 @@ export async function monitorAccounts() {
 						? Math.min(
 								(rateLimitedAccounts.get(account.xAccountId)! - now) * 2,
 								3600000,
-							) 
-						: 300000; 
+							)
+						: 300000;
 
 					rateLimitedAccounts.set(account.xAccountId, now + backoffTime);
 					logger.warn(
@@ -299,4 +317,4 @@ export async function monitorAccounts() {
 export function startMonitoring() {
 	logger.info(`Starting monitoring with interval: ${MONITORING_INTERVAL}ms`);
 	monitorAccounts();
-} 
+}
