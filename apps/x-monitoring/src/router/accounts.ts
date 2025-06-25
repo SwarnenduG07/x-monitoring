@@ -7,7 +7,7 @@ import { cleanupInvalidAccounts } from "../utils/database.js";
 const router = express.Router();
 const logger = createLogger("accounts-router");
 
-// Get all accounts
+
 router.get("/", async (req, res) => {
 	try {
 		const accounts = await prisma.monitoredAccount.findMany();
@@ -18,7 +18,6 @@ router.get("/", async (req, res) => {
 	}
 });
 
-// Add new account
 router.post("/", async (req, res) => {
 	const { username } = req.body;
 
@@ -41,7 +40,6 @@ router.post("/", async (req, res) => {
 			return res.status(200).json(existingAccount);
 		}
 
-		// Get user info from Twitter API
 		try {
 			const userData = await getUserFromTwitter(cleanUsername);
 
@@ -79,7 +77,6 @@ router.post("/", async (req, res) => {
 	}
 });
 
-// Get active accounts (accounts with active subscriptions)
 router.get("/active", async (req, res) => {
 	try {
 		const accountsWithSubscriptions = await prisma.monitoredAccount.findMany({
@@ -99,7 +96,7 @@ router.get("/active", async (req, res) => {
 	}
 });
 
-// Refresh account data from Twitter
+
 router.post("/:id/refresh", async (req, res) => {
 	try {
 		const id = parseInt(req.params.id);
@@ -155,7 +152,7 @@ router.post("/:id/refresh", async (req, res) => {
 	}
 });
 
-// Cleanup invalid accounts
+
 router.post("/cleanup", async (req, res) => {
 	try {
 		logger.info("Manual account cleanup triggered");
