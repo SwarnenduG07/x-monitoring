@@ -14,10 +14,9 @@ export async function cleanupInvalidAccounts() {
 		for (const account of accounts) {
 			if (
 				account.xAccountId.includes("placeholder_") ||
-				!account.xAccountId.match(/^[0-9]+$/) || 
+				!account.xAccountId.match(/^[0-9]+$/) ||
 				account.xAccountId.length < 5
 			) {
-				
 				logger.warn(
 					`Found invalid Twitter ID format: ${account.xAccountId} for user ${account.xUsername}`,
 				);
@@ -36,7 +35,7 @@ export async function cleanupInvalidAccounts() {
 
 						if (existingAccount) {
 							logger.info(
-								`Account with Twitter ID ${userData.id} already exists for ${existingAccount.xUsername}. Merging subscriptions and deleting duplicate.`
+								`Account with Twitter ID ${userData.id} already exists for ${existingAccount.xUsername}. Merging subscriptions and deleting duplicate.`,
 							);
 
 							// Move all subscriptions from placeholder account to existing account
@@ -57,7 +56,7 @@ export async function cleanupInvalidAccounts() {
 							});
 
 							logger.info(
-								`Successfully merged placeholder account ${account.xUsername} into existing account ${existingAccount.xUsername}`
+								`Successfully merged placeholder account ${account.xUsername} into existing account ${existingAccount.xUsername}`,
 							);
 						} else {
 							// Safe to update - no conflict
@@ -77,7 +76,7 @@ export async function cleanupInvalidAccounts() {
 						fixedCount++;
 					} else {
 						logger.error(
-							`Could not find Twitter user for ${account.xUsername}. Consider removing this account.`
+							`Could not find Twitter user for ${account.xUsername}. Consider removing this account.`,
 						);
 					}
 				} catch (error) {
@@ -146,4 +145,4 @@ export async function checkAndFixAccounts() {
 	} catch (error) {
 		logger.error("Error checking accounts:", error);
 	}
-} 
+}

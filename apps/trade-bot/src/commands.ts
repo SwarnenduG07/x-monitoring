@@ -5,7 +5,6 @@ import { Context, type Telegraf } from "telegraf";
 import { verifySolanaToken } from "./service/solana-token-verification";
 import { getTokenBySymbol, verifyTokenAddress } from "./service/tken-service";
 
-
 const logger = createLogger("trade-bot");
 
 export function setupBotCommands(bot: Telegraf, logger: Logger) {

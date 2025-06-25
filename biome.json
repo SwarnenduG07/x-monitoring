@@ -23,11 +23,6 @@
 			"quoteStyle": "double"
 		}
 	},
-	"python": {
-		"formatter": {
-			"quoteStyle": "single"
-		}
-	},
 	"assist": {
 		"enabled": true,
 		"actions": {

@@ -5,7 +5,8 @@ import { prisma } from "@believe-x/database";
 
 const router = Router();
 
-const TRADING_ORCHESTRATOR_URL = process.env.TRADING_ORCHESTRATOR_URL || "http://localhost:3003";
+const TRADING_ORCHESTRATOR_URL =
+	process.env.TRADING_ORCHESTRATOR_URL || "http://localhost:3003";
 
 router.post("/webhook/new-post", async (req, res) => {
 	try {
@@ -117,7 +118,7 @@ ${negativeSignals ? `<b>Concerns:</b>\n${negativeSignals}\n\n` : ""}
 						const tradeResponse = await axios.post(
 							`${TRADING_ORCHESTRATOR_URL}/api/trade`,
 							tradeRequest,
-							{ timeout: 10000 }
+							{ timeout: 10000 },
 						);
 
 						logger.info(

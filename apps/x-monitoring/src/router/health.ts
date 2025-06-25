@@ -17,4 +17,4 @@ router.get("/health", async (req, res) => {
 	}
 });
 
-export default router; 
+export default router;

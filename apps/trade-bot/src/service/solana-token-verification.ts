@@ -3,7 +3,6 @@ import axios from "axios";
 
 const logger = createLogger("solana-token-verification");
 
-
 export interface SolanaTokenInfo {
 	address: string;
 	symbol: string;
@@ -11,7 +10,6 @@ export interface SolanaTokenInfo {
 	decimals?: number;
 	market?: boolean;
 }
-
 
 const KNOWN_TOKENS: Record<string, SolanaTokenInfo> = {
 	Es9vMFrzaCERCLwKzHnh6mFYHTxgdRJrQbz6bG3y5QNo: {
@@ -92,7 +90,7 @@ async function tryMultipleAPIs(
 					symbol: token.symbol,
 					name: token.name || token.symbol,
 					decimals: token.decimals || 9,
-					market: true, 
+					market: true,
 				};
 			}
 		}
