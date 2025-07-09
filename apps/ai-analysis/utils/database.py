@@ -20,7 +20,7 @@ def get_db_connection():
         db_url = os.getenv("DATABASE_URL")
         if not db_url:
             logger.warning("DATABASE_URL not set, using fallback connection string")
-            db_url = "postgresql://x-monitoring_owner:npg_fh9Ne2BmpcLQ@ep-ancient-smoke-a85mqy3p-pooler.eastus2.azure.neon.tech/x-monitoring?sslmode=require"
+            db_url = os.getenv("DATABASE_URL")
         
         logger.info(f"Connecting to database: {db_url.split('@')[1] if '@' in db_url else 'masked'}")
         
