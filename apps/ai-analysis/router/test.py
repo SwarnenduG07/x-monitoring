@@ -6,7 +6,7 @@ dotenv.load_dotenv()
 
 router = APIRouter()
 
-client = genai.Client(api_key=os.getenv("AIzaSyCpZ38Y0raOVNPon041lqxj6KDi3RLFNr8"))
+client = genai.Client(api_key=os.getenv("ENV"))
 
 
 
